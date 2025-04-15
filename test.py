@@ -21,12 +21,10 @@ def load_model(model_path, device):
         raise FileNotFoundError(f"Checkpoint not found: {model_path}")
     checkpoint = torch.load(model_path, map_location=device)
 
-    # 假設是 7維輸入, output_dim=3
     model_ = QNet(input_dim=7, output_dim=3).to(device)
     if 'model' in checkpoint:
         model_.load_state_dict(checkpoint['model'])
     else:
-        # 若你的檔案是 'modelA'/'modelB' 要自行調整
         raise KeyError("Checkpoint missing 'model' key. Found keys: " + str(checkpoint.keys()))
     model_.eval()
     return model_
@@ -47,8 +45,7 @@ def main():
         cfg = yaml.safe_load(f)
     env_cfg = cfg['env']
 
-    # 可以改下面兩行路徑
-    modelA_path = "checkpoints/model2_gen3.pth"
+    modelA_path = "checkpoints/model2_gen6.pth"
     modelB_path = "checkpoints/model2_gen6.pth"
     test_episodes = 5
 
@@ -85,14 +82,12 @@ def main():
     # 4) 準備 Pygame 視窗
     pygame.init()
     screen = pygame.display.set_mode((env_cfg["render_size"], env_cfg["render_size"]))
-    pygame.display.set_caption("2P Pong Test with Scoreboard & Sliders")
+    pygame.display.set_caption("2P Pong Test + Scoreboard + Sliders + Spin + Trail")
     clock = pygame.time.Clock()
 
-    # 載入球圖片, 並縮放到跟原球大小類似(約 16~20px 直徑或依你需求)
+    # 載入球圖片, 並縮放到和原球類似大小
     ball_img_orig = pygame.image.load("assets/sunglasses.png").convert_alpha()
-    # 假設你想要大約 16 px => 16,16
-    # 這裡先試 20x20
-    ball_img_orig = pygame.transform.scale(ball_img_orig, (20, 20))
+    ball_img_orig = pygame.transform.scale(ball_img_orig, (20, 20))  # 大小可調
 
     # 4-1) Slider 參數
     slider_x = 50
@@ -114,9 +109,11 @@ def main():
     # 4-2) 字體 & scoreboard
     font = pygame.font.SysFont(None, 24)
 
-    # 4-3) 我們自己維護一個 ballAngle 來根據 spin 累加
-    # 因為 env 可能沒自動做 spin_angle
+    # 4-3) 我們自己維護 spinAngle
     spinAngle = 0.0
+
+    # 4-4) 軌跡長度
+    TRAIL_SIZE = 30
 
     def draw_slider_and_info():
         # slider bar
@@ -155,7 +152,10 @@ def main():
         done = False
         episode_scoreA = 0
         episode_scoreB = 0
-        spinAngle = 0.0  # 每局重新計算
+        spinAngle = 0.0
+
+        # 每回合開始 => 清空軌跡
+        ball_trail = []
 
         while not done:
             # (A) 處理事件
@@ -197,13 +197,18 @@ def main():
             episode_scoreA += rA
             episode_scoreB += rB
 
-            # (D) 根據 spin 累加 angle
-            # 如果 env.spin 是 "一個 time step spin 量"? => 視情況
-            # 這裡示範: spinAngle += env.spin
-            # 你可再依測試調整 ratio
+            # (D) 根據 spin 累加 angle => spinAngle += env.spin
             spinAngle += env.spin
 
-            # (E) 繪圖
+            # (E) 紀錄球位置到 trail
+            bx = env.ball_x * env.render_size
+            by = env.ball_y * env.render_size
+            ball_trail.append((bx,by))
+            # 控制最大長度
+            if len(ball_trail) > TRAIL_SIZE:
+                ball_trail.pop(0)
+
+            # (F) 繪圖
             screen.fill((0,0,0))
 
             # 1. 畫擋板
@@ -214,16 +219,22 @@ def main():
             bx_ = int(env.bottom_paddle_x * env.render_size)
             pygame.draw.rect(screen, (0,255,0), (bx_ - pw//2, env.render_size-10, pw, 10))
 
-            # 2. 畫球 (用圖檔 + rotate)
-            bx = int(env.ball_x * env.render_size)
-            by = int(env.ball_y * env.render_size)
+            # 2. 畫球軌跡
+            #   連結 ball_trail[i], ball_trail[i+1]
+            for i in range(1, len(ball_trail)):
+                p0 = ball_trail[i-1]
+                p1 = ball_trail[i]
+                pygame.draw.line(screen, (200,200,200), p0, p1, 2)
 
-            # rotate => 轉好的圖
-            rot_ball = pygame.transform.rotate(ball_img_orig, spinAngle)
-            rect = rot_ball.get_rect(center=(bx,by))
-            screen.blit(rot_ball, rect)
+            # 3. 畫球 (用圖檔 + rotate)
+            #   畫在 ball_trail[-1] (當前位置)
+            if len(ball_trail)>0:
+                bxPos, byPos = ball_trail[-1]
+                rot_ball = pygame.transform.rotate(ball_img_orig, spinAngle)
+                rect = rot_ball.get_rect(center=(bxPos, byPos))
+                screen.blit(rot_ball, rect)
 
-            # 3. 畫 slider + scoreboard
+            # 4. 畫 slider + scoreboard + ball info
             draw_slider_and_info()
 
             pygame.display.flip()

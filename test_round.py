@@ -95,7 +95,7 @@ def main():
 
     # 4) 小組賽: 每個 vs. 每個
     #   例如跑 n episodesEach, 累計分數
-    episodesEach = 50  # 每組對戰要打幾局
+    episodesEach = 500  # 每組對戰要打幾局
     n = len(participants)
 
     print("[INFO] Round Robin Start!")

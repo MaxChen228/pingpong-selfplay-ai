@@ -17,7 +17,7 @@ with open("config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
 max_generations = cfg['training']['max_generations']
-episodes_per_generation = cfg['training']['episodes_per_generation']  # 每次測試前的預設訓練場數
+episodes_per_generation = cfg['training']['episodes_per_generation']
 eval_episodes = cfg['training']['eval_episodes']
 win_threshold = cfg['training']['win_threshold']
 
@@ -30,9 +30,10 @@ min_epsilon= cfg['training']['min_epsilon']
 
 init_model_path = cfg['training']['init_model_path']
 
+# 新增：同代嘗試最大次數 => 超過就 fault
+max_retries_for_generation = cfg['training'].get('max_retries_for_generation', 3)
+
 # 2) 建立環境
-#   移除舊的 "ball_speed=cfg['env']['ball_speed']"，改為帶入 ball_speed_range / spin_range / ball_angle_intervals
-#   並將 speed_scale_every, speed_increment 帶入
 env = PongEnv2P(
     render_size  = cfg['env']['render_size'],
     paddle_width = cfg['env']['paddle_width'],
@@ -57,22 +58,21 @@ env = PongEnv2P(
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 3) 建立 QNet => 7維輸入
 def create_model():
+    # QNet(7->3)
     return QNet(input_dim=7, output_dim=3).to(device)
 
 modelA = create_model()
 modelB = create_model()
 optimizerB = optim.Adam(modelB.parameters(), lr=lr)
 
-# 4) 載入 init_model_path
+# 4) 載入 init_model
 if os.path.exists(init_model_path):
     checkpoint = torch.load(init_model_path, map_location=device)
     if 'modelA' in checkpoint and 'modelB' in checkpoint:
         modelA.load_state_dict(checkpoint['modelA'])
         modelB.load_state_dict(checkpoint['modelB'])
     else:
-        # 兼容只存 'model'
         modelA.load_state_dict(checkpoint['model'])
         modelB.load_state_dict(checkpoint['model'])
 
@@ -84,7 +84,7 @@ if os.path.exists(init_model_path):
 else:
     raise FileNotFoundError(f"init_model_path: {init_model_path} not found!")
 
-# 5) A為固定對手 => 不參與更新
+# A 固定 => 不參與更新
 for p in modelA.parameters():
     p.requires_grad = False
 
@@ -94,7 +94,6 @@ reward_history = []
 global_episode_count = 0
 
 def select_action_B(obs):
-    # B 訓練階段 => ε-greedy
     if random.random() < epsilon:
         return random.randint(0,2)
     else:
@@ -134,7 +133,6 @@ def train_step():
     loss.backward()
     optimizerB.step()
 
-# 評估 => A,B 用 argmax
 def select_action_eval(obs, model_):
     with torch.no_grad():
         obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
@@ -158,13 +156,26 @@ def evaluate_win_rate(env, modelA, modelB, episodes=10):
 done_generations = 0
 current_generation = 0
 
-# 多世代迴圈
+def reset_B_model():
+    """
+    重新初始化 B => create modelB + optimizerB + memory
+    """
+    global modelB, optimizerB, memory, epsilon
+    modelB = create_model()
+    optimizerB = optim.Adam(modelB.parameters(), lr=lr)
+    memory.clear()
+    epsilon = 1.0  # 也可重置 eps
+
 while done_generations < max_generations:
     current_generation += 1
     print(f"\n=== Generation {current_generation} ===")
 
+    # 同一代: 為了避免無限深淵 => 限制嘗試次數
+    tries_for_gen = 0
+
     while True:
-        # (1) 先做 episodes_per_generation 場訓練
+        tries_for_gen += 1
+        print(f"  [Gen {current_generation}] try {tries_for_gen}/{max_retries_for_generation}")
         for ep in range(episodes_per_generation):
             global_episode_count += 1
             obsA, obsB = env.reset()
@@ -185,19 +196,19 @@ while done_generations < max_generations:
             # epsilon decay
             epsilon = max(min_epsilon, epsilon * epsilon_decay)
 
-        # (2) 評估
+        # 評估
         wr = evaluate_win_rate(env, modelA, modelB, episodes=eval_episodes)
         print(f"[Gen {current_generation}] Evaluate B => WinRate={wr:.2f}, eps={epsilon:.3f}")
 
-        # 若 B 達標 => 升級 => 進下一代
         if wr >= win_threshold:
             print(f"B surpasses A! => generation {current_generation} done.")
+            # 升級 A
             modelA.load_state_dict(modelB.state_dict())
             for p in modelA.parameters():
                 p.requires_grad = False
 
             # 儲存 => 'model' 放 B
-            ckpt_path = f"checkpoints/model2_gen{current_generation}.pth"
+            ckpt_path = f"checkpoints/model3_gen{current_generation}.pth"
             torch.save({
                 'model': modelB.state_dict(),
                 'optimizer': optimizerB.state_dict(),
@@ -209,10 +220,29 @@ while done_generations < max_generations:
             print(f"[Saved] {ckpt_path}")
 
             done_generations += 1
-            break
+            break  # 結束 while True => 進入下一代
         else:
-            # 沒達標 => 留在同一代繼續訓練
-            print("B not surpass A yet. Keep training in the same generation...")
+            # 沒達標 => check 同代嘗試數
+            if tries_for_gen >= max_retries_for_generation:
+                # fault => 存 model_genX_fault.pth
+                fault_path = f"checkpoints/model3_gen{current_generation}_fault.pth"
+                torch.save({
+                    'model': modelB.state_dict(),
+                    'optimizer': optimizerB.state_dict(),
+                    'epsilon': epsilon,
+                    'episode': global_episode_count,
+                    'modelA': modelA.state_dict(),
+                    'modelB': modelB.state_dict()
+                }, fault_path)
+                print(f"[Fault] B never surpassed A in gen{current_generation}. Save => {fault_path}")
+
+                # 重新初始化 B
+                reset_B_model()
+                # 結束該代 => 進入下一代
+                done_generations += 1
+                break
+            else:
+                print("B not surpass A yet. Keep training in the same generation...")
 
     if done_generations >= max_generations:
         print("Reached max_generations => stop.")
@@ -228,7 +258,7 @@ plt.figure(figsize=(10,4))
 plt.plot(reward_history, alpha=0.3, label='Reward B per Episode')
 plt.plot(range(window-1, len(reward_history)), smooth, label='Smoothed')
 plt.legend()
-plt.title("Reward of B during Iterative Self-Play (Stay in Gen if Fail)")
+plt.title("Reward of B during Iterative Self-Play (Stay in Gen if Fail, with fault rescue)")
 plt.xlabel("Episode")
 plt.ylabel("Reward B")
 os.makedirs("plot", exist_ok=True)
