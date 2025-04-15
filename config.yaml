@@ -1,26 +1,26 @@
 env:
   render_size: 400
   paddle_width: 0.2
-  paddle_speed: 0.02
+  paddle_speed: 0.03
   max_score: 3
   enable_render: false
 
   # 馬格努斯 + 剛體參數
   enable_spin: true
-  magnus_factor: 0.01
-  restitution: 0.9
-  friction: 0.2
+  magnus_factor: 0.015
+  restitution: 1
+  friction: 0.4
   ball_mass: 1.0
   world_ball_radius: 0.03
 
   # 初始條件
-  ball_speed_range: [0.01, 0.05]
-  spin_range: [-10, 10]
+  ball_speed_range: [0.04, 0.06]
+  spin_range: [-5, 5]
   ball_angle_intervals: [[-60, -30], [30, 60]]
 
   # 新增：彈跳幾次後加速
-  speed_scale_every: 3
-  speed_increment: 0.2
+  speed_scale_every: 5
+  speed_increment: 0.1
 
 training:
   max_generations: 10        # 最多迭代幾代

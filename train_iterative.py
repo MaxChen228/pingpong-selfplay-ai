@@ -12,7 +12,7 @@ import time
 from envs.my_pong_env_2p import PongEnv2P
 from models.qnet import QNet
 
-# 讀取 config
+# 1) 讀取 config
 with open("config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
@@ -30,34 +30,52 @@ min_epsilon= cfg['training']['min_epsilon']
 
 init_model_path = cfg['training']['init_model_path']
 
-# 建立環境
+# 2) 建立環境
+#   移除舊的 "ball_speed=cfg['env']['ball_speed']"，改為帶入 ball_speed_range / spin_range / ball_angle_intervals
+#   並將 speed_scale_every, speed_increment 帶入
 env = PongEnv2P(
     render_size  = cfg['env']['render_size'],
     paddle_width = cfg['env']['paddle_width'],
     paddle_speed = cfg['env']['paddle_speed'],
-    ball_speed   = cfg['env']['ball_speed'],
     max_score    = cfg['env']['max_score'],
-    enable_render= False
+    enable_render= False,
+
+    enable_spin       = cfg['env']['enable_spin'],
+    magnus_factor     = cfg['env']['magnus_factor'],
+    restitution       = cfg['env']['restitution'],
+    friction          = cfg['env']['friction'],
+    ball_mass         = cfg['env']['ball_mass'],
+    world_ball_radius = cfg['env']['world_ball_radius'],
+
+    ball_angle_intervals = cfg['env']['ball_angle_intervals'],
+    ball_speed_range  = tuple(cfg['env']['ball_speed_range']),
+    spin_range        = tuple(cfg['env']['spin_range']),
+
+    speed_scale_every = cfg['env']['speed_scale_every'],
+    speed_increment   = cfg['env']['speed_increment']
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# 3) 建立 QNet => 7維輸入
 def create_model():
-    return QNet(input_dim=6, output_dim=3).to(device)
+    return QNet(input_dim=7, output_dim=3).to(device)
 
 modelA = create_model()
 modelB = create_model()
 optimizerB = optim.Adam(modelB.parameters(), lr=lr)
 
-# 載入 init_model_path => model_gen0.pth
+# 4) 載入 init_model_path
 if os.path.exists(init_model_path):
     checkpoint = torch.load(init_model_path, map_location=device)
     if 'modelA' in checkpoint and 'modelB' in checkpoint:
         modelA.load_state_dict(checkpoint['modelA'])
         modelB.load_state_dict(checkpoint['modelB'])
     else:
+        # 兼容只存 'model'
         modelA.load_state_dict(checkpoint['model'])
         modelB.load_state_dict(checkpoint['model'])
+
     if 'optimizer' in checkpoint:
         optimizerB.load_state_dict(checkpoint['optimizer'])
     epsilon = checkpoint.get('epsilon', 1.0)
@@ -66,7 +84,7 @@ if os.path.exists(init_model_path):
 else:
     raise FileNotFoundError(f"init_model_path: {init_model_path} not found!")
 
-# A為固定對手 => 不參與更新
+# 5) A為固定對手 => 不參與更新
 for p in modelA.parameters():
     p.requires_grad = False
 
@@ -76,7 +94,7 @@ reward_history = []
 global_episode_count = 0
 
 def select_action_B(obs):
-    # B訓練階段 => ε-greedy
+    # B 訓練階段 => ε-greedy
     if random.random() < epsilon:
         return random.randint(0,2)
     else:
@@ -86,7 +104,7 @@ def select_action_B(obs):
             return q.argmax(dim=1).item()
 
 def select_action_A(obs):
-    # A固定 => 無探索
+    # A 固定 => 無探索
     with torch.no_grad():
         obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
         q = modelA(obs_t)
@@ -112,12 +130,11 @@ def train_step():
     expected_q = rewards_ + gamma * next_q * (~dones)
 
     loss = nn.MSELoss()(q_val, expected_q)
-
     optimizerB.zero_grad()
     loss.backward()
     optimizerB.step()
 
-# 評估時 => A, B都用argmax
+# 評估 => A,B 用 argmax
 def select_action_eval(obs, model_):
     with torch.no_grad():
         obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
@@ -138,17 +155,10 @@ def evaluate_win_rate(env, modelA, modelB, episodes=10):
                 wins += 1
     return wins / episodes
 
-
 done_generations = 0
 current_generation = 0
 
-# while done_generations < max_generations:
-#     # 原本： 一旦跑完就 +1 generation，不管輸贏
-#     # 現在改：若 B 沒贏就不+1 generation
-# 
-# 改法：我們把 "一個 generation" 包在 while True 直到 wr >= threshold
-# 這樣 B 不斷訓練+測試，直到贏了 => break => done_generations++
-
+# 多世代迴圈
 while done_generations < max_generations:
     current_generation += 1
     print(f"\n=== Generation {current_generation} ===")
@@ -173,20 +183,20 @@ while done_generations < max_generations:
 
             reward_history.append(ep_rewardB)
             # epsilon decay
-            epsilon = max(min_epsilon, epsilon*epsilon_decay)
+            epsilon = max(min_epsilon, epsilon * epsilon_decay)
 
         # (2) 評估
         wr = evaluate_win_rate(env, modelA, modelB, episodes=eval_episodes)
         print(f"[Gen {current_generation}] Evaluate B => WinRate={wr:.2f}, eps={epsilon:.3f}")
 
+        # 若 B 達標 => 升級 => 進下一代
         if wr >= win_threshold:
-            # B 打敗 A => 升級
             print(f"B surpasses A! => generation {current_generation} done.")
             modelA.load_state_dict(modelB.state_dict())
             for p in modelA.parameters():
                 p.requires_grad = False
 
-            # 儲存 => 'model' 放 B的
+            # 儲存 => 'model' 放 B
             ckpt_path = f"checkpoints/model_gen{current_generation}.pth"
             torch.save({
                 'model': modelB.state_dict(),
@@ -199,15 +209,14 @@ while done_generations < max_generations:
             print(f"[Saved] {ckpt_path}")
 
             done_generations += 1
-            break  # 跳出 while True, 進入下一個 generation
+            break
         else:
-            # wr < threshold => 繼續待在同個 generation 繼續訓練
+            # 沒達標 => 留在同一代繼續訓練
             print("B not surpass A yet. Keep training in the same generation...")
 
     if done_generations >= max_generations:
         print("Reached max_generations => stop.")
         break
-
 
 env.close()
 

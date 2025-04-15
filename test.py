@@ -20,7 +20,7 @@ def load_model(model_path, device):
         raise FileNotFoundError(f"Checkpoint not found: {model_path}")
     checkpoint = torch.load(model_path, map_location=device)
 
-    model_ = QNet(input_dim=6, output_dim=3).to(device)
+    model_ = QNet(input_dim=7, output_dim=3).to(device)
     if 'model' in checkpoint:
         model_.load_state_dict(checkpoint['model'])
     else:
@@ -72,10 +72,11 @@ def main():
         ball_mass         = env_cfg["ball_mass"],
         world_ball_radius = env_cfg["world_ball_radius"],
         ball_angle_intervals = env_cfg["ball_angle_intervals"],
-
+        speed_scale_every = env_cfg["speed_scale_every"],
+        speed_increment   = env_cfg["speed_increment"],
         # 讀取 range
         ball_speed_range  = tuple(env_cfg["ball_speed_range"]),
-        spin_range        = tuple(env_cfg["spin_range"])
+        spin_range        = tuple(env_cfg["spin_range"]) 
     )
 
     # ========== 4. Pygame GUI 參數 (Slider) ============
