@@ -197,7 +197,7 @@ while done_generations < max_generations:
                 p.requires_grad = False
 
             # 儲存 => 'model' 放 B
-            ckpt_path = f"checkpoints/model_gen{current_generation}.pth"
+            ckpt_path = f"checkpoints/model2_gen{current_generation}.pth"
             torch.save({
                 'model': modelB.state_dict(),
                 'optimizer': optimizerB.state_dict(),
