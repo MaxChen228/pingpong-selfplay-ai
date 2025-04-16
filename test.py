@@ -45,7 +45,7 @@ def main():
         cfg = yaml.safe_load(f)
     env_cfg = cfg['env']
 
-    modelA_path = "checkpoints/model2_gen5.pth"
+    modelA_path = "checkpoints/model3_gen5.pth"
     modelB_path = "checkpoints/model3_gen0.pth"
     test_episodes = 5
 

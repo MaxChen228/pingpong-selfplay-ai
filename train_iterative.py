@@ -208,7 +208,7 @@ while done_generations < max_generations:
                 p.requires_grad = False
 
             # 儲存 => 'model' 放 B
-            ckpt_path = f"checkpoints/model3_gen{current_generation}.pth"
+            ckpt_path = f"checkpoints/model4_gen{current_generation}.pth"
             torch.save({
                 'model': modelB.state_dict(),
                 'optimizer': optimizerB.state_dict(),
@@ -225,7 +225,7 @@ while done_generations < max_generations:
             # 沒達標 => check 同代嘗試數
             if tries_for_gen >= max_retries_for_generation:
                 # fault => 存 model_genX_fault.pth
-                fault_path = f"checkpoints/model3_gen{current_generation}_fault.pth"
+                fault_path = f"checkpoints/model4_gen{current_generation}_fault.pth"
                 torch.save({
                     'model': modelB.state_dict(),
                     'optimizer': optimizerB.state_dict(),

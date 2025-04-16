@@ -23,19 +23,19 @@ env:
   speed_increment: 0.1
 
 training:
-  max_generations: 30        # 最多迭代幾代
-  episodes_per_generation: 2000
-  eval_episodes: 100         # 每代結束後評估
-  win_threshold: 0.7        # 勝率 > 0.7 即升級
-  max_retries_for_generation: 10
+  max_generations: 15        # 最多迭代幾代
+  episodes_per_generation: 2400
+  eval_episodes: 200         # 每代結束後評估
+  win_threshold: 0.68        # 勝率 > 0.7 即升級
+  max_retries_for_generation: 8
 
   lr: 0.0005
   gamma: 0.99
   batch_size: 128
   memory_size: 500000
-  epsilon_decay: 0.997
+  epsilon_decay: 0.993
   min_epsilon: 0.08
 
-  init_model_path: "checkpoints/model2_gen0.pth"  # 一開始載入
+  init_model_path: "checkpoints/model3_gen0.pth"  # 一開始載入
 
   

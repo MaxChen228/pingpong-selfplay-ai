@@ -49,11 +49,11 @@ def main():
     # 2) 準備要參賽的模型路徑
     # 例如可以放多個檔案:
     model_paths = [
-        "checkpoints/model_gen0.pth",
-        "checkpoints/model_gen3.pth",
-        "checkpoints/model2_gen0.pth",
-        "checkpoints/model2_gen3.pth",
-        "checkpoints/model2_gen6.pth"
+        "checkpoints/model3_gen0.pth",
+        "checkpoints/model3_gen1_fault.pth",
+        "checkpoints/model3_gen2_fault.pth",
+        "checkpoints/model3_gen4.pth",
+        "checkpoints/model3_gen5.pth"
         # 你可以再加 ...
     ]
     # 參賽者清單
@@ -95,7 +95,7 @@ def main():
 
     # 4) 小組賽: 每個 vs. 每個
     #   例如跑 n episodesEach, 累計分數
-    episodesEach = 500  # 每組對戰要打幾局
+    episodesEach = 100  # 每組對戰要打幾局
     n = len(participants)
 
     print("[INFO] Round Robin Start!")
