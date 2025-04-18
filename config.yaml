@@ -4,38 +4,38 @@ env:
   paddle_speed: 0.03
   max_score: 3
   enable_render: false
-
-  # 馬格努斯 + 剛體參數
   enable_spin: true
   magnus_factor: 0.015
   restitution: 1
   friction: 0.6
   ball_mass: 1.0
   world_ball_radius: 0.03
-
-  # 初始條件
   ball_speed_range: [0.03, 0.05]
   spin_range: [-5, 5]
   ball_angle_intervals: [[-60, -30], [30, 60]]
-
-  # 新增：彈跳幾次後加速
   speed_scale_every: 1
   speed_increment: 0.1
 
 training:
-  max_generations: 15        # 最多迭代幾代
-  episodes_per_generation: 2400
-  eval_episodes: 200         # 每代結束後評估
-  win_threshold: 0.68        # 勝率 > 0.7 即升級
-  max_retries_for_generation: 8
+  max_generations: 18
+  episodes_per_generation: 2000       # ↑ 更多训练样本
+  eval_episodes: 300                 # ↑ 更大评估样本减少波动
+  max_retries_for_generation: 16
+  win_rate_interval: 50             # ↑ 平滑训练统计
+  target_update_interval: 1000
+  model_id: 4
+  opponent_pool_ratio: 0.2
+  min_pool_generation: 2
 
-  lr: 0.0005
+  # 升级条件：调低对 A 门槛，调高对 Pool 门槛
+  curr_win_threshold: 0.68
+  pool_win_threshold: 0.65
+
+  lr: 0.00025                        # ↓ 更小学习率，训练更平稳
   gamma: 0.99
-  batch_size: 128
-  memory_size: 500000
-  epsilon_decay: 0.993
-  min_epsilon: 0.08
+  batch_size: 256                   # ↑ 更大批量，梯度更稳定
+  memory_size: 1000000              # ↑ 回放容量
+  epsilon_decay: 0.995              # ↑ 探索衰减慢一些
+  min_epsilon: 0.02                 # ↓ 更低后期随机率
 
-  init_model_path: "checkpoints/model3_gen0.pth"  # 一開始載入
-
-  
+  init_model_path: "checkpoints/model4-12.pth"

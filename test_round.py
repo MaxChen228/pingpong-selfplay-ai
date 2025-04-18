@@ -3,7 +3,7 @@
 round_robin_stats.py ─ Round‑robin tournament evaluator with statistics & plotting
 ====================================================================
 > **更新**：改以 **`model_paths` 手動清單**，不再自動偵測萬用字元。
->   ‑ 使用者可在 `USER_CONFIG` 填入任意檔案路徑 list。  
+>   ‑ 使用者可在 `USER_CONFIG` 填入任意檔案路徑 list。
 >   ‑ 其餘功能 (統計 / 圖表) 不變。
 
 功能一覽
@@ -40,17 +40,17 @@ USER_CONFIG = {
 
     # ➜ 手動列出所有模型
     "model_paths": [
-        "checkpoints/model_gen1.pth",
-        "checkpoints/model_gen3.pth",
-        "checkpoints/model_gen5.pth",
-        "checkpoints/model2_gen0.pth",
-        "checkpoints/model2_gen1.pth",
-        "checkpoints/model2_gen3.pth",
-        "checkpoints/model2_gen5.pth",
-        "checkpoints/model3_gen0.pth",
-        "checkpoints/model3_gen3.pth",
-        "checkpoints/model3_gen4.pth",
-        "checkpoints/model4_gen0.pth",
+        "checkpoints/model2-0.pth",
+        "checkpoints/model2-3.pth",
+        "checkpoints/model3-3.pth",
+        "checkpoints/model4-0.pth",
+        "checkpoints/model4-2.pth",
+        "checkpoints/model4-4.pth",
+        "checkpoints/model4-6.pth",
+        "checkpoints/model4-7.pth",
+        "checkpoints/model4-9.pth",
+        "checkpoints/model4-11.pth",
+        "checkpoints/model4-12.pth",
     ],
 
     # 每兩人對戰的局數
@@ -76,12 +76,17 @@ def load_model(model_path: str | Path, device: torch.device) -> QNet:
         raise FileNotFoundError(path)
     ckpt = torch.load(path, map_location=device)
     net = QNet(input_dim=7, output_dim=3).to(device)
+    # 嘗試載入 'model'，若不存在則 fallback 到 'modelB'
     try:
         net.load_state_dict(ckpt["model"])
-    except KeyError as e:
-        raise KeyError(f"Checkpoint {path} missing 'model' key → {e}")
+    except KeyError:
+        if "modelB" in ckpt:
+            net.load_state_dict(ckpt["modelB"])
+        else:
+            raise KeyError(f"Checkpoint {path} missing 'model' or 'modelB' key")
     net.eval()
     return net
+
 
 def select_action_eval(obs: np.ndarray, model: QNet, device: torch.device) -> int:
     """Greedy action selection (no exploration)."""
@@ -107,7 +112,6 @@ def round_robin(
     }
 
     # 2. 建立環境 (統一關閉 render)
-    # 強制關閉 render，避免 YAML 內已經帶有同名參數造成重複
     env_cfg["enable_render"] = False
     env = PongEnv2P(**env_cfg)
 
@@ -127,7 +131,6 @@ def round_robin(
                 (obs_a, obs_b), (r_a, r_b), done, _ = env.step(act_a, act_b)
                 score_a += r_a
                 score_b += r_b
-            # 記錄結果
             if score_a > score_b:
                 wins_a += 1
                 winner = a
@@ -206,28 +209,23 @@ def plot_h2h_heatmap(match_df: pd.DataFrame, out_dir: Path) -> Path:
 # ------------------------------- Main -------------------------------
 
 def main() -> None:
-    # 讀取環境設定
     cfg_path = Path(USER_CONFIG["config_yaml"])
     with open(cfg_path, "r", encoding="utf‑8") as f:
         env_cfg = yaml.safe_load(f)["env"]
 
-    # 解析 model list (手動指定)
     model_paths = USER_CONFIG["model_paths"]
     if not model_paths:
         raise ValueError("USER_CONFIG['model_paths'] is empty. 請手動列出模型路徑！")
     model_paths = [str(p) for p in model_paths]
 
-    # 其他參數
     episodes_each = int(USER_CONFIG["episodes_each"])
     output_dir = Path(USER_CONFIG["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     generate_plots = bool(USER_CONFIG["generate_plots"])
     quiet = bool(USER_CONFIG["quiet"])
 
-    # 裝置選擇
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 執行比賽
     match_df, summary_df = round_robin(
         env_cfg=env_cfg,
         model_paths=model_paths,
@@ -236,25 +234,20 @@ def main() -> None:
         verbose=not quiet,
     )
 
-    # 儲存 CSV 結果
     match_csv = output_dir / "match_records.csv"
     summary_csv = output_dir / "summary.csv"
     match_df.to_csv(match_csv, index=False)
     summary_df.to_csv(summary_csv)
     print(f"\n[✓] 統計完成 → {summary_csv.resolve().relative_to(Path.cwd())}")
 
-    # 產生圖表
     if generate_plots:
         win_png = plot_win_rates(summary_df, output_dir)
         h2h_png = plot_h2h_heatmap(match_df, output_dir)
         print("[✓] 圖表已生成 →", win_png.resolve().relative_to(Path.cwd()), ",", h2h_png.resolve().relative_to(Path.cwd()))
 
-    # 排名顯示
     print("\n=== Final Ranking ===")
     for rank, (name, row) in enumerate(summary_df.itertuples(), 1):
         print(f"#{rank:>2}  {name:<25}  W:{row.win:>3}  L:{row.lose:>3}  WR:{row.win_rate*100:6.2f}%")
 
-
 if __name__ == "__main__":
     main()
-

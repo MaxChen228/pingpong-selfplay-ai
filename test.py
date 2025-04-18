@@ -15,17 +15,22 @@ from models.qnet import QNet
 def load_model(model_path, device):
     """
     載入 .pth 檔案，回傳一個 QNet 實例
-    預期檔案內含 {'model': state_dict, ...}
+    預期檔案內含 {'model': state_dict, ...} 或 {'modelB': state_dict, ...}
     """
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Checkpoint not found: {model_path}")
     checkpoint = torch.load(model_path, map_location=device)
 
     model_ = QNet(input_dim=7, output_dim=3).to(device)
+    # 先嘗試載入 'model'
     if 'model' in checkpoint:
-        model_.load_state_dict(checkpoint['model'])
+        state_dict = checkpoint['model']
+    # fallback 到 'modelB'
+    elif 'modelB' in checkpoint:
+        state_dict = checkpoint['modelB']
     else:
-        raise KeyError("Checkpoint missing 'model' key. Found keys: " + str(checkpoint.keys()))
+        raise KeyError("Checkpoint missing 'model' or 'modelB' key. Found keys: " + str(checkpoint.keys()))
+    model_.load_state_dict(state_dict)
     model_.eval()
     return model_
 
@@ -45,8 +50,8 @@ def main():
         cfg = yaml.safe_load(f)
     env_cfg = cfg['env']
 
-    modelA_path = "checkpoints/model3_gen5.pth"
-    modelB_path = "checkpoints/model3_gen0.pth"
+    modelA_path = "checkpoints/model4-0.pth"
+    modelB_path = "checkpoints/model4-12.pth"
     test_episodes = 5
 
     print("[Info] Using environment config:", env_cfg)
@@ -204,39 +209,26 @@ def main():
             bx = env.ball_x * env.render_size
             by = env.ball_y * env.render_size
             ball_trail.append((bx,by))
-            # 控制最大長度
             if len(ball_trail) > TRAIL_SIZE:
                 ball_trail.pop(0)
 
             # (F) 繪圖
             screen.fill((0,0,0))
-
-            # 1. 畫擋板
             tx = int(env.top_paddle_x * env.render_size)
             pw = int(env.paddle_width * env.render_size)
             pygame.draw.rect(screen, (0,255,0), (tx - pw//2, 0, pw, 10))
-
             bx_ = int(env.bottom_paddle_x * env.render_size)
             pygame.draw.rect(screen, (0,255,0), (bx_ - pw//2, env.render_size-10, pw, 10))
-
-            # 2. 畫球軌跡
-            #   連結 ball_trail[i], ball_trail[i+1]
             for i in range(1, len(ball_trail)):
                 p0 = ball_trail[i-1]
                 p1 = ball_trail[i]
                 pygame.draw.line(screen, (200,200,200), p0, p1, 2)
-
-            # 3. 畫球 (用圖檔 + rotate)
-            #   畫在 ball_trail[-1] (當前位置)
             if len(ball_trail)>0:
                 bxPos, byPos = ball_trail[-1]
                 rot_ball = pygame.transform.rotate(ball_img_orig, spinAngle)
                 rect = rot_ball.get_rect(center=(bxPos, byPos))
                 screen.blit(rot_ball, rect)
-
-            # 4. 畫 slider + scoreboard + ball info
             draw_slider_and_info()
-
             pygame.display.flip()
             time.sleep(0.05 / speed_factor)
 
