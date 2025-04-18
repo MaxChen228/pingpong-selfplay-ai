@@ -17,14 +17,14 @@ env:
   speed_increment: 0.1
 
 training:
-  max_generations: 18
+  max_generations: 8
   episodes_per_generation: 2000       # ↑ 更多训练样本
   eval_episodes: 300                 # ↑ 更大评估样本减少波动
   max_retries_for_generation: 16
-  win_rate_interval: 50             # ↑ 平滑训练统计
+  win_rate_interval: 200             # ↑ 平滑训练统计
   target_update_interval: 1000
-  model_id: 4
-  opponent_pool_ratio: 0.2
+  model_id: 5
+  opponent_pool_ratio: 0.3
   min_pool_generation: 2
 
   # 升级条件：调低对 A 门槛，调高对 Pool 门槛
