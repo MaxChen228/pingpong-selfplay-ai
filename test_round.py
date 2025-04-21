@@ -2,18 +2,14 @@
 """
 round_robin_stats.py ─ Round‑robin tournament evaluator with statistics & plotting
 ====================================================================
-> **更新**：改以 **`model_paths` 手動清單**，不再自動偵測萬用字元。
->   ‑ 使用者可在 `USER_CONFIG` 填入任意檔案路徑 list。
->   ‑ 其餘功能 (統計 / 圖表) 不變。
+> **更新**：改以手动映射旧架构 checkpoint 到 NoisyNet Dueling QNet，并支持 strict=False 加载。
+>   - 在 `load_model` 中对旧的 `fc.*` 键做映射到 `features.*` 及 `fc_A`/`fc_V` μ 参数。
+>   - 新架构 checkpoint 仍可直接 strict=True 加载。
+>   - 其它功能（统计/绘图）不变。
 
-功能一覽
----------
-1. **統計所有對戰資料、勝率**  → `match_records.csv`, `summary.csv`
-2. **漂亮圖表**                 → `win_rates.png`, `h2h_heatmap.png`
-3. **易調整介面 & 中文註解**      → 通通集中在 `USER_CONFIG`  區塊
-
-原始來源：`test_round.py`  (使用者上傳)  citeturn0file0
+原始来源：`test_round.py` (用户上传) :contentReference[oaicite:0]{index=0}&#8203;:contentReference[oaicite:1]{index=1}
 """
+
 from __future__ import annotations
 
 import itertools
@@ -28,62 +24,83 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from envs.my_pong_env_2p import PongEnv2P  # type: ignore
-from models.qnet import QNet  # type: ignore
+from models.qnet import QNet                 # type: ignore
 
 # ╔═════════════════════════════════════════════════════════════════╗
 # ║                         USER CONFIG                             ║
-# ║   👇👇👇 只改這裡就行！                                          ║
 # ╚═════════════════════════════════════════════════════════════════╝
+        # """"checkpoints/model1-0.pth",
+        # "checkpoints/model1-1.pth",
+        # "checkpoints/model1-3.pth",
+        # "checkpoints/model2-0.pth",
+        # "checkpoints/model2-3.pth",
+        # "checkpoints/model3-3.pth",
+        # "checkpoints/model4-0.pth",
+        # "checkpoints/model4-2.pth",
+        # "checkpoints/model4-4.pth",
+        # "checkpoints/model4-6.pth",
+        # "checkpoints/model4-7.pth",
+        # "checkpoints/model4-9.pth",
+        # "checkpoints/model4-11.pth",
+        # "checkpoints/model4-12.pth","""
 USER_CONFIG = {
-    # YAML 檔：環境設定
     "config_yaml": "config.yaml",
-
-    # ➜ 手動列出所有模型
     "model_paths": [
-        "checkpoints/model2-0.pth",
-        "checkpoints/model2-3.pth",
-        "checkpoints/model3-3.pth",
-        "checkpoints/model4-0.pth",
-        "checkpoints/model4-2.pth",
-        "checkpoints/model4-4.pth",
-        "checkpoints/model4-6.pth",
-        "checkpoints/model4-7.pth",
-        "checkpoints/model4-9.pth",
-        "checkpoints/model4-11.pth",
+
         "checkpoints/model4-12.pth",
+        "checkpoints/model5-1_fault.pth",
+        "checkpoints/model5-2_fault.pth",
+        "checkpoints/model5-3_fault.pth",
+        "checkpoints/model5-4_fault.pth",
+        "checkpoints/model5-5_fault.pth"
     ],
-
-    # 每兩人對戰的局數
-    "episodes_each": 100,
-
-    # 結果輸出資料夾
+    "episodes_each": 300,
     "output_dir": "results",
-
-    # 是否產生圖表 (PNG)
     "generate_plots": True,
-
-    # 是否靜音（不顯示每組對戰 log）
     "quiet": False,
 }
-# ═══════════════════════════════════════════════════════════════════
 
 # ----------------------------- 工具函式 -----------------------------
 
 def load_model(model_path: str | Path, device: torch.device) -> QNet:
-    """Load a QNet checkpoint and return the model in eval mode."""
+    """
+    Load a QNet checkpoint and return the model in eval mode.
+    Supports both new NoisyNet‑Dueling checkpoints and old single‑head fc.* checkpoints.
+    
+    """
     path = Path(model_path)
     if not path.exists():
         raise FileNotFoundError(path)
     ckpt = torch.load(path, map_location=device)
+    state = ckpt.get("model", ckpt.get("modelB"))
+    if state is None:
+        raise KeyError(f"Checkpoint {path} missing 'model' or 'modelB' key")
+
     net = QNet(input_dim=7, output_dim=3).to(device)
-    # 嘗試載入 'model'，若不存在則 fallback 到 'modelB'
-    try:
-        net.load_state_dict(ckpt["model"])
-    except KeyError:
-        if "modelB" in ckpt:
-            net.load_state_dict(ckpt["modelB"])
-        else:
-            raise KeyError(f"Checkpoint {path} missing 'model' or 'modelB' key")
+
+    # 如果是新架构（NoisyNet+Dueling），直接严格加载
+    if any(k.startswith("features.") or k.startswith("fc_V.") or k.startswith("fc_A.") for k in state.keys()):
+        net.load_state_dict(state)
+    else:
+        # 旧架构：键为 fc.0, fc.2, fc.4
+        mapped: Dict[str, torch.Tensor] = {}
+        # 映射特征层
+        for k, v in state.items():
+            if k.startswith("fc.0."):
+                mapped[k.replace("fc.0.", "features.0.")] = v
+            elif k.startswith("fc.2."):
+                mapped[k.replace("fc.2.", "features.2.")] = v
+        # 把旧最后一层 fc.4 映射到 fc_A μ 参数
+        w4 = state["fc.4.weight"]
+        b4 = state["fc.4.bias"]
+        mapped["fc_A.weight_mu"] = w4
+        mapped["fc_A.bias_mu"]   = b4
+        # 让 fc_V μ 参数为旧 fc.4 权重/偏置的均值
+        mapped["fc_V.weight_mu"] = w4.mean(dim=0, keepdim=True)
+        mapped["fc_V.bias_mu"]   = b4.mean().unsqueeze(0)
+        # 使用 strict=False 加载，保留 NoisyNet σ & ε 初始值
+        net.load_state_dict(mapped, strict=False)
+
     net.eval()
     return net
 
@@ -106,20 +123,18 @@ def round_robin(
     verbose: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Run round‑robin tournament and return (match_df, summary_df)."""
-    # 1. 準備選手 (name → model)
     participants: Dict[str, Dict] = {
-        Path(p).stem: {"model": load_model(p, device)} for p in model_paths
+        Path(p).stem: {"model": load_model(p, device)}
+        for p in model_paths
     }
 
-    # 2. 建立環境 (統一關閉 render)
     env_cfg["enable_render"] = False
     env = PongEnv2P(**env_cfg)
 
-    match_records: List[Dict] = []
-
-    # 3. 每兩人互打
+    match_records: list[dict] = []
     for a, b in itertools.combinations(participants.keys(), 2):
-        net_a, net_b = participants[a]["model"], participants[b]["model"]
+        net_a = participants[a]["model"]
+        net_b = participants[b]["model"]
         wins_a = wins_b = 0
         for ep in range(episodes_each):
             obs_a, obs_b = env.reset()
@@ -132,51 +147,45 @@ def round_robin(
                 score_a += r_a
                 score_b += r_b
             if score_a > score_b:
-                wins_a += 1
-                winner = a
+                wins_a += 1; winner = a
             elif score_b > score_a:
-                wins_b += 1
-                winner = b
+                wins_b += 1; winner = b
             else:
                 winner = "draw"
-            match_records.append(
-                {
-                    "episode": ep,
-                    "player_a": a,
-                    "player_b": b,
-                    "score_a": score_a,
-                    "score_b": score_b,
-                    "winner": winner,
-                }
-            )
+            match_records.append({
+                "episode": ep,
+                "player_a": a,
+                "player_b": b,
+                "score_a": score_a,
+                "score_b": score_b,
+                "winner": winner,
+            })
         if verbose:
             print(f"{a} vs {b} → A_wins={wins_a:3}  B_wins={wins_b:3}")
 
     env.close()
 
-    # 4. 統計
     match_df = pd.DataFrame(match_records)
-    win_count = match_df[match_df["winner"] != "draw"].groupby("winner").size()
-    lose_count = (
+    wc = match_df[match_df["winner"] != "draw"].groupby("winner").size()
+    lc = (
         match_df[match_df["winner"] != "draw"]
         .assign(loser=lambda d: np.where(d["winner"] == d["player_a"], d["player_b"], d["player_a"]))
-        .groupby("loser")
-        .size()
+        .groupby("loser").size()
     )
-    summary_df = pd.DataFrame({"win": win_count, "lose": lose_count}).fillna(0).astype(int)
+    summary_df = pd.DataFrame({"win": wc, "lose": lc}).fillna(0).astype(int)
     summary_df["games"] = summary_df["win"] + summary_df["lose"]
     summary_df["win_rate"] = summary_df["win"] / summary_df["games"]
     summary_df = summary_df.sort_values("win_rate", ascending=False)
 
     return match_df, summary_df
 
-# ---------------------------- 視覺化 ----------------------------
+# ---------------------------- 视 觉 化 ----------------------------
 
 def plot_win_rates(summary_df: pd.DataFrame, out_dir: Path) -> Path:
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8,5))
     summary_df["win_rate"].plot.bar(ax=ax)
-    ax.set_ylabel("Win Rate (%)")
-    ax.set_ylim(0, 1)
+    ax.set_ylabel("Win Rate")
+    ax.set_ylim(0,1)
     ax.set_title("Tournament Win Rates")
     ax.set_xticklabels(summary_df.index, rotation=45, ha="right")
     fig.tight_layout()
@@ -185,20 +194,17 @@ def plot_win_rates(summary_df: pd.DataFrame, out_dir: Path) -> Path:
     plt.close(fig)
     return out_path
 
-
 def plot_h2h_heatmap(match_df: pd.DataFrame, out_dir: Path) -> Path:
-    players = sorted(set(match_df["player_a"]).union(match_df["player_b"]))
+    players = sorted(set(match_df["player_a"]) | set(match_df["player_b"]))
     h2h = pd.DataFrame(0, index=players, columns=players, dtype=int)
     for _, row in match_df.iterrows():
         if row["winner"] == "draw":
             continue
-        winner = row["winner"]
-        loser = row["player_b"] if winner == row["player_a"] else row["player_a"]
-        h2h.loc[winner, loser] += 1
-    fig, ax = plt.subplots(figsize=(6, 5))
+        win, lose = row["winner"], (row["player_b"] if row["winner"] == row["player_a"] else row["player_a"])
+        h2h.at[win, lose] += 1
+    fig, ax = plt.subplots(figsize=(6,5))
     sns.heatmap(h2h, annot=True, fmt="d", cmap="viridis", ax=ax)
-    ax.set_xlabel("Loser →")
-    ax.set_ylabel("Winner →")
+    ax.set_xlabel("Loser →"); ax.set_ylabel("Winner →")
     ax.set_title("Head‑to‑Head Wins")
     fig.tight_layout()
     out_path = out_dir / "h2h_heatmap.png"
@@ -210,12 +216,12 @@ def plot_h2h_heatmap(match_df: pd.DataFrame, out_dir: Path) -> Path:
 
 def main() -> None:
     cfg_path = Path(USER_CONFIG["config_yaml"])
-    with open(cfg_path, "r", encoding="utf‑8") as f:
+    with open(cfg_path, "r", encoding="utf-8") as f:
         env_cfg = yaml.safe_load(f)["env"]
 
     model_paths = USER_CONFIG["model_paths"]
     if not model_paths:
-        raise ValueError("USER_CONFIG['model_paths'] is empty. 請手動列出模型路徑！")
+        raise ValueError("请在 USER_CONFIG 中手动列出模型路径！")
     model_paths = [str(p) for p in model_paths]
 
     episodes_each = int(USER_CONFIG["episodes_each"])
@@ -234,20 +240,23 @@ def main() -> None:
         verbose=not quiet,
     )
 
-    match_csv = output_dir / "match_records.csv"
+    match_csv   = output_dir / "match_records.csv"
     summary_csv = output_dir / "summary.csv"
     match_df.to_csv(match_csv, index=False)
     summary_df.to_csv(summary_csv)
-    print(f"\n[✓] 統計完成 → {summary_csv.resolve().relative_to(Path.cwd())}")
+    print(f"\n[✓] 统计完成 → {summary_csv.relative_to(Path.cwd())}")
 
     if generate_plots:
         win_png = plot_win_rates(summary_df, output_dir)
         h2h_png = plot_h2h_heatmap(match_df, output_dir)
-        print("[✓] 圖表已生成 →", win_png.resolve().relative_to(Path.cwd()), ",", h2h_png.resolve().relative_to(Path.cwd()))
+        print("[✓] 图表已生成 →", win_png.relative_to(Path.cwd()), ",", h2h_png.relative_to(Path.cwd()))
 
     print("\n=== Final Ranking ===")
     for rank, (name, row) in enumerate(summary_df.itertuples(), 1):
-        print(f"#{rank:>2}  {name:<25}  W:{row.win:>3}  L:{row.lose:>3}  WR:{row.win_rate*100:6.2f}%")
+        print(
+            f"#{rank:2d}  {name:<25}  "
+            f"W:{row.win:3d}  L:{row.lose:3d}  WR:{row.win_rate*100:6.2f}%"
+        )
 
 if __name__ == "__main__":
     main()

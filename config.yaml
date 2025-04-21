@@ -18,18 +18,18 @@ env:
 
 training:
   max_generations: 8
-  episodes_per_generation: 2000       # ↑ 更多训练样本
-  eval_episodes: 300                 # ↑ 更大评估样本减少波动
-  max_retries_for_generation: 16
-  win_rate_interval: 200             # ↑ 平滑训练统计
+  episodes_per_generation: 2400       # ↑ 更多训练样本
+  eval_episodes: 1000                 # ↑ 更大评估样本减少波动
+  max_retries_for_generation: 12
+  win_rate_interval: 400             # ↑ 平滑训练统计
   target_update_interval: 1000
   model_id: 5
-  opponent_pool_ratio: 0.3
+  opponent_pool_ratio: 0.33
   min_pool_generation: 2
 
   # 升级条件：调低对 A 门槛，调高对 Pool 门槛
-  curr_win_threshold: 0.68
-  pool_win_threshold: 0.65
+  curr_win_threshold: 0.61
+  pool_win_threshold: 0.61
 
   lr: 0.00025                        # ↓ 更小学习率，训练更平稳
   gamma: 0.99

@@ -1,254 +1,185 @@
 #!/usr/bin/env python3
+"""
+test.py ─ 2P Pong Viewer
+────────────────────────────────────────────────────────────────
+• 支援舊 fc.* checkpoint 以及新版 Noisy‑Dueling checkpoint
+• 功能：滑桿速度調節、SPACE 暫停、分數 & 球速/轉速顯示、球旋轉圖、軌跡拖曳
+"""
 
-import os
-import time
-import math
+from __future__ import annotations
+
+import os, random, time, math
+from pathlib import Path
+from typing import Dict, Any, Tuple, List
+
 import yaml
 import pygame
-import torch
-import random
 import numpy as np
+import torch
 
-from envs.my_pong_env_2p import PongEnv2P
-from models.qnet import QNet
+from envs.my_pong_env_2p import PongEnv2P      # type: ignore
+from models.qnet import QNet                   # 新版 (Noisy + Dueling)
 
-def load_model(model_path, device):
+# ────────────────── 1. 讀取環境設定 ──────────────────
+with open("config.yaml", "r") as f:
+    ENV_CFG: Dict[str, Any] = yaml.safe_load(f)["env"]
+
+MODEL_A_PATH = "checkpoints/model4-0.pth"
+MODEL_B_PATH = "checkpoints/model4-12.pth"
+TEST_EPISODES = 5
+BALL_IMG      = "assets/sunglasses.png"      # 你的球圖片
+
+# ────────────────── 2. 載入模型（自動容錯） ──────────────────
+def load_model(model_path: str | Path, device: torch.device) -> QNet:
     """
-    載入 .pth 檔案，回傳一個 QNet 實例
-    預期檔案內含 {'model': state_dict, ...} 或 {'modelB': state_dict, ...}
+    支援：
+      ① 新 checkpoint → features./fc_V./fc_A.  → strict=True
+      ② 舊 checkpoint → fc.0./fc.2./fc.4.     → 做 key 映射後 strict=False 讀入
     """
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Checkpoint not found: {model_path}")
-    checkpoint = torch.load(model_path, map_location=device)
+    path = Path(model_path)
+    if not path.exists():
+        raise FileNotFoundError(path)
+    ckpt  = torch.load(path, map_location=device)
+    state = ckpt.get("model") or ckpt.get("modelB")
+    if state is None:
+        raise KeyError(f"{path} 缺少 'model' 或 'modelB' 欄位 (keys={list(ckpt.keys())})")
 
-    model_ = QNet(input_dim=7, output_dim=3).to(device)
-    # 先嘗試載入 'model'
-    if 'model' in checkpoint:
-        state_dict = checkpoint['model']
-    # fallback 到 'modelB'
-    elif 'modelB' in checkpoint:
-        state_dict = checkpoint['modelB']
+    net = QNet(input_dim=7, output_dim=3).to(device)
+
+    # 判斷舊 / 新
+    is_new = any(k.startswith(("features.", "fc_V.", "fc_A.")) for k in state)
+    if is_new:
+        net.load_state_dict(state, strict=True)
     else:
-        raise KeyError("Checkpoint missing 'model' or 'modelB' key. Found keys: " + str(checkpoint.keys()))
-    model_.load_state_dict(state_dict)
-    model_.eval()
-    return model_
+        mapped: Dict[str, torch.Tensor] = {}
+        for k, v in state.items():
+            if k.startswith("fc.0."):
+                mapped[k.replace("fc.0.", "features.0.")] = v
+            elif k.startswith("fc.2."):
+                mapped[k.replace("fc.2.", "features.2.")] = v
+        w4, b4 = state["fc.4.weight"], state["fc.4.bias"]
+        mapped["fc_A.weight_mu"] = w4
+        mapped["fc_A.bias_mu"]   = b4
+        mapped["fc_V.weight_mu"] = w4.mean(dim=0, keepdim=True)
+        mapped["fc_V.bias_mu"]   = b4.mean().unsqueeze(0)
+        net.load_state_dict(mapped, strict=False)   # 允許缺少 σ/ε
+    net.eval()
+    return net
 
-def select_action_eval(obs, model_, device):
-    """
-    不帶探索 => 直接 argmax Q
-    """
+# ────────────────── 3. 選擇動作 (argmax 無探索) ──────────────────
+def act_greedy(obs: np.ndarray, net: QNet, dev: torch.device) -> int:
     with torch.no_grad():
-        obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-        q_values = model_(obs_t)
-        action = q_values.argmax(dim=1).item()
-    return action
+        q = net(torch.tensor(obs, dtype=torch.float32, device=dev).unsqueeze(0))
+        return int(q.argmax(1).item())
 
-def main():
-    # 1) 讀取 config.yaml
-    with open("config.yaml", "r") as f:
-        cfg = yaml.safe_load(f)
-    env_cfg = cfg['env']
-
-    modelA_path = "checkpoints/model4-0.pth"
-    modelB_path = "checkpoints/model4-12.pth"
-    test_episodes = 5
-
-    print("[Info] Using environment config:", env_cfg)
-    print(f"[Info] Model A: {modelA_path}")
-    print(f"[Info] Model B: {modelB_path}")
-
-    # 2) 建立裝置 & 載入模型
+# ────────────────── 4. 主函式 ──────────────────
+def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    modelA = load_model(modelA_path, device)
-    modelB = load_model(modelB_path, device)
+    print("[Info] Using environment config:", ENV_CFG)
+    print("[Info] Model A:", MODEL_A_PATH)
+    print("[Info] Model B:", MODEL_B_PATH)
 
-    # 3) 建立 Pong 雙人環境 => enable_render=False, 我們要自行繪圖
-    env = PongEnv2P(
-        render_size  = env_cfg["render_size"],
-        paddle_width = env_cfg["paddle_width"],
-        paddle_speed = env_cfg["paddle_speed"],
-        max_score    = env_cfg["max_score"],
-        enable_render= False,
+    modelA = load_model(MODEL_A_PATH, device)
+    modelB = load_model(MODEL_B_PATH, device)
 
-        enable_spin       = env_cfg["enable_spin"],
-        magnus_factor     = env_cfg["magnus_factor"],
-        restitution       = env_cfg["restitution"],
-        friction          = env_cfg["friction"],
-        ball_mass         = env_cfg["ball_mass"],
-        world_ball_radius = env_cfg["world_ball_radius"],
-        ball_angle_intervals = env_cfg["ball_angle_intervals"],
-        speed_scale_every = env_cfg["speed_scale_every"],
-        speed_increment   = env_cfg["speed_increment"],
-        ball_speed_range  = tuple(env_cfg["ball_speed_range"]),
-        spin_range        = tuple(env_cfg["spin_range"])
-    )
+    env_cfg = dict(ENV_CFG); env_cfg["enable_render"] = False
+    env = PongEnv2P(**env_cfg)
 
-    # 4) 準備 Pygame 視窗
+    # ── Pygame 初始化 ───────────────────────────
     pygame.init()
-    screen = pygame.display.set_mode((env_cfg["render_size"], env_cfg["render_size"]))
-    pygame.display.set_caption("2P Pong Test + Scoreboard + Sliders + Spin + Trail")
-    clock = pygame.time.Clock()
+    RENDER = env_cfg["render_size"]
+    screen = pygame.display.set_mode((RENDER, RENDER))
+    pygame.display.set_caption("Pong 2P Viewer")
+    font  = pygame.font.SysFont(None, 24)
 
-    # 載入球圖片, 並縮放到和原球類似大小
-    ball_img_orig = pygame.image.load("assets/sunglasses.png").convert_alpha()
-    ball_img_orig = pygame.transform.scale(ball_img_orig, (20, 20))  # 大小可調
+    # 球圖
+    ball_img0 = pygame.image.load(BALL_IMG).convert_alpha()
+    ball_img0 = pygame.transform.scale(ball_img0, (20, 20))
 
-    # 4-1) Slider 參數
-    slider_x = 50
-    slider_y = 30
-    slider_w = 200
-    slider_h = 10
-    speed_min = 0.1
-    speed_max = 3.0
-    speed_factor = 1.0
-    def factor_to_knob(factor):
-        alpha = (factor - speed_min) / (speed_max - speed_min)
-        return slider_w * alpha
-    def knob_to_factor(knob_pos):
-        alpha = knob_pos / slider_w
-        return speed_min + alpha*(speed_max - speed_min)
-    knob_x = factor_to_knob(speed_factor)
+    # Slider 參數
+    slider_x, slider_y, slider_w, slider_h = 50, 30, 200, 10
+    speed_min, speed_max, speed_factor = 0.1, 3.0, 1.0
+    knob_x = slider_w * (speed_factor - speed_min) / (speed_max - speed_min)
     paused = False
 
-    # 4-2) 字體 & scoreboard
-    font = pygame.font.SysFont(None, 24)
-
-    # 4-3) 我們自己維護 spinAngle
-    spinAngle = 0.0
-
-    # 4-4) 軌跡長度
-    TRAIL_SIZE = 30
-
-    def draw_slider_and_info():
-        # slider bar
-        bar_rect = pygame.Rect(slider_x, slider_y, slider_w, slider_h)
-        pygame.draw.rect(screen, (180,180,180), bar_rect)
-        # knob
-        knob_rect = pygame.Rect(slider_x + knob_x -5, slider_y -5, 10, 20)
-        pygame.draw.rect(screen, (255,100,100), knob_rect)
-        # 文字
-        text = font.render(f"Speed x{speed_factor:.2f}", True, (255,255,255))
-        screen.blit(text, (slider_x + slider_w + 20, slider_y -5))
-
-        # scoreboard => 顯示 A/B 分數
-        scoreboard_txt = f"A Score: {env.scoreA}   B Score: {env.scoreB}"
-        scoreboard_surf = font.render(scoreboard_txt, True, (255,255,0))
-        screen.blit(scoreboard_surf, (10, 70))
-
-        # 顯示球速 & 轉速
-        ball_speed = math.hypot(env.ball_vx, env.ball_vy)
-        spin_text = f"Ball spin={env.spin:.2f}, speed={ball_speed:.3f}"
-        spin_surf = font.render(spin_text, True, (255,255,255))
-        screen.blit(spin_surf, (10, 100))
-
-        # 顯示暫停
+    def draw_ui(ball_speed: float):
+        # slider
+        pygame.draw.rect(screen, (180,180,180), (slider_x, slider_y, slider_w, slider_h))
+        pygame.draw.rect(screen, (255,100,100), (slider_x+knob_x-5, slider_y-5, 10, 20))
+        screen.blit(font.render(f"Speed x{speed_factor:.2f}", True, (255,255,255)),
+                    (slider_x+slider_w+15, slider_y-5))
+        # 分數
+        s_txt = f"A:{env.scoreA}  B:{env.scoreB}"
+        screen.blit(font.render(s_txt, True, (255,255,0)), (10,70))
+        # 球速 / 轉速
+        spin = env.spin
+        screen.blit(font.render(f"spin={spin:+5.2f}  v={ball_speed:5.3f}", True, (255,255,255)),
+                    (10,100))
         if paused:
-            pause_text = font.render("PAUSED (press SPACE)", True, (255, 0, 0))
-            screen.blit(pause_text, (slider_x, slider_y + 40))
+            screen.blit(font.render("PAUSED (SPACE)", True, (255,0,0)), (slider_x, slider_y+40))
 
-    # 5) episodes 參數
-    scoreA_total = 0
-    scoreB_total = 0
-
-    # 6) 主迴圈
-    for ep in range(test_episodes):
+    # ── 主迴圈 ────────────────────────────────
+    for ep in range(TEST_EPISODES):
         obsA, obsB = env.reset()
+        spin_angle = 0.0
+        trail: List[Tuple[float,float]] = []
         done = False
-        episode_scoreA = 0
-        episode_scoreB = 0
-        spinAngle = 0.0
-
-        # 每回合開始 => 清空軌跡
-        ball_trail = []
 
         while not done:
-            # (A) 處理事件
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    env.close()
-                    pygame.quit()
-                    return
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    mx,my = pygame.mouse.get_pos()
-                    if (slider_x <= mx <= slider_x+slider_w) and (slider_y-10 <= my <= slider_y+slider_h+20):
-                        knob_x = mx - slider_x
-                        knob_x = max(0, min(slider_w, knob_x))
-                        speed_factor = knob_to_factor(knob_x)
-                elif event.type == pygame.MOUSEMOTION:
+            # 處理事件
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
+                    pygame.quit(); return
+                elif e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE:
+                    paused = not paused
+                elif e.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEMOTION):
                     if pygame.mouse.get_pressed()[0]:
                         mx,my = pygame.mouse.get_pos()
-                        if (slider_x <= mx <= slider_x+slider_w) and (slider_y-10 <= my <= slider_y+slider_h+20):
+                        if slider_x <= mx <= slider_x+slider_w and slider_y-10 <= my <= slider_y+slider_h+20:
                             knob_x = mx - slider_x
-                            knob_x = max(0, min(slider_w, knob_x))
-                            speed_factor = knob_to_factor(knob_x)
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_SPACE:
-                        paused = not paused
+                            speed_factor = speed_min + (speed_max-speed_min)*(knob_x/slider_w)
 
-            # (B) 若暫停 => 不做 step
             if paused:
-                screen.fill((30,30,30))
-                draw_slider_and_info()
-                pygame.display.flip()
-                time.sleep(0.05)
+                screen.fill((30,30,30)); draw_ui(0.0); pygame.display.flip(); time.sleep(0.05)
                 continue
 
-            # (C) 用 modelA, modelB 做動作 => env.step
-            actA = select_action_eval(obsA, modelA, device)
-            actB = select_action_eval(obsB, modelB, device)
-            (nextA,nextB), (rA, rB), done, _ = env.step(actA, actB)
-            obsA, obsB = nextA, nextB
-            episode_scoreA += rA
-            episode_scoreB += rB
+            # step
+            actA = act_greedy(obsA, modelA, device)
+            actB = act_greedy(obsB, modelB, device)
+            (obsA, obsB), (_, rB), done, _ = env.step(actA, actB)
 
-            # (D) 根據 spin 累加 angle => spinAngle += env.spin
-            spinAngle += env.spin
+            # 旋轉角度 & 軌跡
+            spin_angle += env.spin
+            bx = env.ball_x * RENDER
+            by = env.ball_y * RENDER
+            trail.append((bx,by))
+            if len(trail) > 30: trail.pop(0)
 
-            # (E) 紀錄球位置到 trail
-            bx = env.ball_x * env.render_size
-            by = env.ball_y * env.render_size
-            ball_trail.append((bx,by))
-            if len(ball_trail) > TRAIL_SIZE:
-                ball_trail.pop(0)
-
-            # (F) 繪圖
+            # 繪圖
             screen.fill((0,0,0))
-            tx = int(env.top_paddle_x * env.render_size)
-            pw = int(env.paddle_width * env.render_size)
-            pygame.draw.rect(screen, (0,255,0), (tx - pw//2, 0, pw, 10))
-            bx_ = int(env.bottom_paddle_x * env.render_size)
-            pygame.draw.rect(screen, (0,255,0), (bx_ - pw//2, env.render_size-10, pw, 10))
-            for i in range(1, len(ball_trail)):
-                p0 = ball_trail[i-1]
-                p1 = ball_trail[i]
-                pygame.draw.line(screen, (200,200,200), p0, p1, 2)
-            if len(ball_trail)>0:
-                bxPos, byPos = ball_trail[-1]
-                rot_ball = pygame.transform.rotate(ball_img_orig, spinAngle)
-                rect = rot_ball.get_rect(center=(bxPos, byPos))
-                screen.blit(rot_ball, rect)
-            draw_slider_and_info()
+            # 擋板
+            pw = int(env.paddle_width * RENDER)
+            top_x = int(env.top_paddle_x * RENDER)
+            bot_x = int(env.bottom_paddle_x * RENDER)
+            pygame.draw.rect(screen, (0,255,0), (top_x-pw//2, 0, pw, 10))
+            pygame.draw.rect(screen, (0,255,0), (bot_x-pw//2, RENDER-10, pw, 10))
+            # 軌跡
+            for i in range(1,len(trail)):
+                pygame.draw.line(screen, (200,200,200), trail[i-1], trail[i], 2)
+            # 球
+            rot_ball = pygame.transform.rotate(ball_img0, spin_angle)
+            screen.blit(rot_ball, rot_ball.get_rect(center=(bx,by)))
+            # UI
+            v = math.hypot(env.ball_vx, env.ball_vy)
+            draw_ui(v)
+
             pygame.display.flip()
             time.sleep(0.05 / speed_factor)
 
-        print(f"[Episode {ep+1}] A_score={episode_scoreA}, B_score={episode_scoreB}")
-        scoreA_total += episode_scoreA
-        scoreB_total += episode_scoreB
+        print(f"[Episode {ep+1}] done → B reward = {rB:+.1f}")
 
     env.close()
     pygame.quit()
-
-    print("\n===== Test Finished =====")
-    print(f"Total episodes: {test_episodes}")
-    print(f"A total score: {scoreA_total}")
-    print(f"B total score: {scoreB_total}")
-    if scoreB_total > scoreA_total:
-        print(">> B wins overall!")
-    elif scoreB_total < scoreA_total:
-        print(">> A wins overall!")
-    else:
-        print(">> Tie??")
 
 if __name__ == "__main__":
     main()
