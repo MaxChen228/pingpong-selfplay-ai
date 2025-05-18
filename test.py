@@ -24,7 +24,7 @@ from models.qnet import QNet                   # 新版 (Noisy + Dueling)
 with open("config.yaml", "r") as f:
     ENV_CFG: Dict[str, Any] = yaml.safe_load(f)["env"]
 
-MODEL_A_PATH = "checkpoints/model2-0.pth"
+MODEL_A_PATH = "checkpoints/model4-0.pth"
 MODEL_B_PATH = "checkpoints/model4-12.pth"
 TEST_EPISODES = 5
 BALL_IMG      = "assets/sunglasses.png"      # 你的球圖片

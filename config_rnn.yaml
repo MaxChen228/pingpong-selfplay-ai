@@ -1,0 +1,88 @@
+# config_rnn.yaml
+
+# -----------------------------------------------------------------------------
+# 環境參數 (通常可以與原 config.yaml 保持一致，除非您想為 RNN 調整環境)
+# -----------------------------------------------------------------------------
+env:
+  render_size: 400
+  paddle_width: 0.2
+  paddle_speed: 0.03  # 擋板速度
+  max_score: 3        # 每局最高得分
+  enable_render: false # 是否在訓練時渲染 (通常設為 false 以加速)
+
+  # --- 物理效果相關 ---
+  enable_spin: true      # 是否啟用球的旋轉效果
+  magnus_factor: 0.025   # 馬格努斯力因子 (影響旋轉球的彎曲程度)
+  restitution: 1.0       # 球拍/牆壁的反彈係數 (1.0 表示完全彈性)
+  friction: 0.6          # 球拍對球的摩擦係數 (影響擊球時的旋轉改變)
+  ball_mass: 1.0         # 球的質量 (影響碰撞響應)
+  world_ball_radius: 0.03 # 球的半徑 (用於物理計算)
+
+  # --- 球的初始狀態 ---
+  ball_speed_range: [0.03, 0.05] # 初始球速範圍 (x, y 合成速度)
+  spin_range: [-5, 5]            # 初始球的旋轉速度範圍
+  ball_angle_intervals: [[-60, -30], [30, 60]] # 初始發球角度區間 (度)
+
+  # --- 遊戲動態調整 ---
+  speed_scale_every: 5  # 每隔多少次球拍擊球，球速增加
+  speed_increment: 0.2  # 每次球速增加的比例
+
+  # (可選) RNN 環境特定參數 (如果需要)
+  # max_episode_steps: 1000 # 每局最大步數，防止無限循環 (可在 train_rnn_iterative.py 中使用)
+
+# -----------------------------------------------------------------------------
+# 訓練參數 (專為 QNetRNN 調整)
+# -----------------------------------------------------------------------------
+training:
+  # --- 模型類型和架構 ---
+  model_type: "QNetRNN"      # 指定模型類型
+  feature_dim: 128           # QNetRNN 中特徵提取層的輸出維度
+  lstm_hidden_dim: 128       # QNetRNN 中 LSTM 層的隱藏單元數量
+  lstm_layers: 1             # QNetRNN 中 LSTM 的層數 (1 或 2 通常足夠)
+  head_hidden_dim: 128       # QNetRNN 中 Dueling Head 前的共享 MLP 層維度 (設為 0 則無此層)
+
+  # --- 序列處理相關 ---
+  trace_length: 8            # 訓練時 RNN 輸入的序列長度 (例如 8, 16, 32)
+  # burn_in_length: 0          # (可選) BPTT "burn-in" 長度，用於預熱隱藏狀態 (如果設為0則不使用)
+                              # burn_in_length 應小於 trace_length
+
+  # --- Self-Play 迭代參數 ---
+  max_generations: 5        # 最大訓練世代數 (可以比 QNet 多一些，因為 RNN 可能需要更多時間收斂)
+  episodes_per_generation: 3000 # 每世代的訓練局數 (RNN 可能需要更多局數)
+  eval_episodes: 500         # 評估時的局數 (保持或適度減少以加速，但需保證統計意義)
+  max_retries_for_generation: 10 # 每代模型B挑戰A的最大嘗試次數
+
+  # --- 升級條件 ---
+  curr_win_threshold: 0.60   # 對當前 modelA 的勝率閾值 (RNN 初期可能較難達到高閾值)
+  pool_win_threshold: 0.60   # 對對手池的勝率閾值
+
+  # --- 學習相關超參數 (可能需要為 RNN 重新調整) ---
+  lr: 0.0001                 # 學習率 (RNN 通常使用較小的學習率)
+  gamma: 0.99                # 折扣因子 (保持或微調)
+  batch_size: 64             # 批量大小 (指序列的批次數，RNN 的 batch 可能需要小一些以適應顯存)
+  
+  # --- 經驗回放池 (Replay Buffer for Sequences) ---
+  memory_size: 200000        # 回放池大小 (存儲的 episode 數量或總 transitions 數量，取決於實現)
+                              # 由於序列數據更佔空間，可能需要調整此值
+  min_episodes_for_training_start: 10 # (新) 至少收集多少個 episodes 的數據才開始訓練 (確保 buffer 有足夠的 trace)
+
+
+  # --- 探索策略 (Epsilon-greedy) ---
+  initial_epsilon_per_generation: 1.0 # (新) 每一個新的 generation 開始時的 epsilon 值
+  epsilon_decay: 0.999       # Epsilon 衰減率 (RNN 可能需要更慢的衰減或更長的探索)
+  min_epsilon: 0.05          # 最小 Epsilon 值 (RNN 可能需要保持稍高的探索水平)
+
+  # --- 目標網路更新 ---
+  target_update_interval: 2000 # Target network 更新頻率 (步數，RNN 可能需要更頻繁或更穩定的更新)
+
+  # --- 路徑和ID ---
+  model_id_prefix: "rnn_pong_soul_" # RNN 模型保存時的ID前綴
+  init_model_path_rnn: null  # RNN 初始模型路徑 (設為 null 或一個不存在的路徑則從隨機初始化開始)
+                               # 例如: "checkpoints_rnn/initial_rnn_model.pth"
+  ckpt_dir_rnn: "checkpoints_rnn" # RNN 模型 checkpoints 的保存目錄
+  plot_dir_rnn: "plot_rnn"        # RNN 訓練曲線圖的保存目錄
+
+  # --- 其他 ---
+  opponent_pool_ratio: 0.4   # 從對手池中選擇對手的比例 (可以嘗試不同比例)
+  win_rate_interval: 500     # 計算和打印勝率的間隔局數
+  # min_pool_generation: 2 # (原config有，但RNN可能不需要或有不同邏輯)

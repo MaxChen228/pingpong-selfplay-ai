@@ -5,7 +5,7 @@ env:
   max_score: 3
   enable_render: false
   enable_spin: true
-  magnus_factor: 0.015
+  magnus_factor: 0.025
   restitution: 1
   friction: 0.6
   ball_mass: 1.0
