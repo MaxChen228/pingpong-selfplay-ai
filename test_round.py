@@ -46,13 +46,8 @@ from models.qnet import QNet                 # type: ignore
 USER_CONFIG = {
     "config_yaml": "config.yaml",
     "model_paths": [
-
+        "checkpoints/model2-0.pth",
         "checkpoints/model4-12.pth",
-        "checkpoints/model5-1_fault.pth",
-        "checkpoints/model5-2_fault.pth",
-        "checkpoints/model5-3_fault.pth",
-        "checkpoints/model5-4_fault.pth",
-        "checkpoints/model5-5_fault.pth"
     ],
     "episodes_each": 300,
     "output_dir": "results",
