@@ -64,7 +64,7 @@ epsilon_decay           = get_cfg('epsilon_decay')
 min_epsilon             = get_cfg('min_epsilon')
 
 # 針對 RNN 的模型路徑和ID
-rnn_model_id_prefix = get_cfg('model_id_prefix', 'rnn_agent_') # 用於區分模型
+rnn_model_id_prefix = get_cfg('model_id_prefix', 'rnn_agent_2_') # 用於區分模型
 init_model_path     = get_cfg('init_model_path_rnn', None) # RNN 的初始模型路徑，可以是 None
                                                             # 如果為 None，則從隨機初始化開始
                                                             # 注意：不能直接用舊 QNet 的 .pth
@@ -403,7 +403,7 @@ def train_step_rnn():
     # else:
     #     loss = F.smooth_l1_loss(q_values_for_action_at_T_minus_1, td_targets)
             
-    if train_steps_count % 200 == 0: # 每 200 步打印一次損失
+    if train_steps_count % 1500 == 0: # 每 200 步打印一次損失
         print(f"    [Train Step {train_steps_count}] Loss: {loss.item():.5f}, Epsilon: {epsilon:.3f}")
 
     # --- 4. 反向傳播和優化 ---

@@ -37,12 +37,12 @@ training:
   # --- 模型類型和架構 ---
   model_type: "QNetRNN"      # 指定模型類型
   feature_dim: 128           # QNetRNN 中特徵提取層的輸出維度
-  lstm_hidden_dim: 128       # QNetRNN 中 LSTM 層的隱藏單元數量
-  lstm_layers: 1             # QNetRNN 中 LSTM 的層數 (1 或 2 通常足夠)
+  lstm_hidden_dim: 256       # QNetRNN 中 LSTM 層的隱藏單元數量
+  lstm_layers: 2             # QNetRNN 中 LSTM 的層數 (1 或 2 通常足夠)
   head_hidden_dim: 128       # QNetRNN 中 Dueling Head 前的共享 MLP 層維度 (設為 0 則無此層)
 
   # --- 序列處理相關 ---
-  trace_length: 8            # 訓練時 RNN 輸入的序列長度 (例如 8, 16, 32)
+  trace_length: 24            # 訓練時 RNN 輸入的序列長度 (例如 8, 16, 32)
   # burn_in_length: 0          # (可選) BPTT "burn-in" 長度，用於預熱隱藏狀態 (如果設為0則不使用)
                               # burn_in_length 應小於 trace_length
 
@@ -58,7 +58,7 @@ training:
 
   # --- 學習相關超參數 (可能需要為 RNN 重新調整) ---
   lr: 0.0001                 # 學習率 (RNN 通常使用較小的學習率)
-  gamma: 0.99                # 折扣因子 (保持或微調)
+  gamma: 0.999                # 折扣因子 (保持或微調)
   batch_size: 64             # 批量大小 (指序列的批次數，RNN 的 batch 可能需要小一些以適應顯存)
   
   # --- 經驗回放池 (Replay Buffer for Sequences) ---
@@ -83,6 +83,6 @@ training:
   plot_dir_rnn: "plot_rnn"        # RNN 訓練曲線圖的保存目錄
 
   # --- 其他 ---
-  opponent_pool_ratio: 0.4   # 從對手池中選擇對手的比例 (可以嘗試不同比例)
+  opponent_pool_ratio: 0.8   # 從對手池中選擇對手的比例 (可以嘗試不同比例)
   win_rate_interval: 500     # 計算和打印勝率的間隔局數
   # min_pool_generation: 2 # (原config有，但RNN可能不需要或有不同邏輯)
