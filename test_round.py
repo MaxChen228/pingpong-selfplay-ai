@@ -35,45 +35,45 @@ USER_CONFIG: Dict[str, Any] = {
     "rnn_model_config_path": "config_rnn.yaml", # RNN 模型架構參數配置文件路徑
 
     "models_to_compete": [
-        # {
-        #     "name": "model2-0", # 自定義模型名稱，用於報告和圖表
-        #     "path": "checkpoints/model2-0.pth", # 模型 checkpoint 路徑
-        #     "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
-        # },
-        # {
-        #     "name": "model3-0",
-        #     "path": "checkpoints/model3-0.pth",
-        #     "type": "QNet",
-        # },
-        # {
-        #     "name": "model4-0", # 自定義模型名稱，用於報告和圖表
-        #     "path": "checkpoints/model4-0.pth", # 模型 checkpoint 路徑
-        #     "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
-        # },
         {
-            "name": "model4-12",
-            "path": "checkpoints/model4-12.pth",
+            "name": "model2-0", # 自定義模型名稱，用於報告和圖表
+            "path": "checkpoints/model2-0.pth", # 模型 checkpoint 路徑
+            "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
+        },
+        {
+            "name": "model3-0",
+            "path": "checkpoints/model3-0.pth",
             "type": "QNet",
         },
-        # {
-        #     "name": "RNN_Gen1",
-        #     "path": "checkpoints_rnn/rnn_agent_1.pth", # 假設這是你的 RNN 模型
-        #     "type": "QNetRNN",
-        # },
-        # {
-        #     "name": "RNN_Gen2",
-        #     "path": "checkpoints_rnn/rnn_agent_2.pth", # 假設這是你的 RNN 模型
-        #     "type": "QNetRNN",
-        # },
-        # {
-        #     "name": "RNN_Gen3",
-        #     "path": "checkpoints_rnn/rnn_agent_3.pth", # 假設這是你的 RNN 模型
-        #     "type": "QNetRNN",
-        # },
+        {
+            "name": "model4-0", # 自定義模型名稱，用於報告和圖表
+            "path": "checkpoints/model4-0.pth", # 模型 checkpoint 路徑
+            "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
+        },
+        {
+            "name": "model4-12",
+            "path": "checkpoints/model4-12.pth", #
+            "type": "QNet", #
+        },
+        {
+            "name": "RNN_Gen1",
+            "path": "checkpoints_rnn/rnn_agent_1.pth", # 假設這是你的 RNN 模型
+            "type": "QNetRNN",
+        },
+        {
+            "name": "RNN_Gen2",
+            "path": "checkpoints_rnn/rnn_agent_2.pth", # 假設這是你的 RNN 模型
+            "type": "QNetRNN",
+        },
+        {
+            "name": "RNN_Gen3",
+            "path": "checkpoints_rnn/rnn_agent_3.pth", # 假設這是你的 RNN 模型
+            "type": "QNetRNN",
+        },
         {
             "name": "RNN_Gen4",
-            "path": "checkpoints_rnn/rnn_agent_4.pth", # 假設這是你的 RNN 模型
-            "type": "QNetRNN",
+            "path": "checkpoints_rnn/rnn_agent_4.pth", 
+            "type": "QNetRNN", 
         },
         # 你可以繼續添加更多模型進行比賽
         # {
@@ -81,11 +81,19 @@ USER_CONFIG: Dict[str, Any] = {
         #     "path": "checkpoints_rnn/rnn_pong_soul_2_fault.pth",
         #     "type": "QNetRNN",
         # },
+
+        # --- 新增的硬編碼代理 ---
+        {
+            "name": "BallFollowerBot",  # 您可以給它取任何名字
+            "path": "N/A",             # 不需要模型檔案
+            "type": "HardcodedBallFollower" # 新的類型名稱
+        },
+        # --- 新增結束 ---
     ],
-    "episodes_per_match": 1000,  # 每對模型之間進行的比賽局數
-    "output_dir": "results_round_robin", # 結果 (CSV, 圖表) 的輸出目錄
-    "generate_plots": True,     # 是否生成勝率圖和 H2H 熱力圖
-    "verbose_match_progress": False, # 是否在每局結束後打印詳細進度 (如果局數很多，可以設為 False)
+    "episodes_per_match": 100,  # 每對模型之間進行的比賽局數 #
+    "output_dir": "results_round_robin", # 結果 (CSV, 圖表) 的輸出目錄 #
+    "generate_plots": True,     # 是否生成勝率圖和 H2H 熱力圖 #
+    "verbose_match_progress": False, # 是否在每局結束後打印詳細進度 (如果局數很多，可以設為 False) #
 }
 # ────────────────── (用戶配置區域結束) ──────────────────
 
@@ -93,10 +101,16 @@ USER_CONFIG: Dict[str, Any] = {
 # ────────────────── 2. 通用模型載入函數 ──────────────────
 def load_model_universal(model_info: Dict[str, str],
                          rnn_arch_config: Dict[str, Any],
-                         device: torch.device) -> nn.Module:
+                         device: torch.device) -> Union[nn.Module, str, None]: # 修改返回類型提示
     model_path_str = model_info["path"]
     model_type = model_info["type"]
     model_name = model_info.get("name", Path(model_path_str).stem) # 用於日誌
+
+    # --- 新增：處理硬編碼代理 ---
+    if model_type == "HardcodedBallFollower":
+        print(f"  識別到硬編碼代理: {model_name} (類型: {model_type})")
+        return "HardcodedAgent" # 返回一個描述性字串或 None
+    # --- 新增結束 ---
 
     path = Path(model_path_str)
     if not path.exists():
@@ -149,6 +163,7 @@ def load_model_universal(model_info: Dict[str, str],
         ).to(device)
         net.load_state_dict(state_dict)
     else:
+        # 這個 else 理論上不應該被觸發，因為 HardcodedBallFollower 已在前面處理
         raise ValueError(f"不支持的模型類型 '{model_type}' (模型: {model_name})")
 
     net.eval()
@@ -157,25 +172,50 @@ def load_model_universal(model_info: Dict[str, str],
     return net
 
 # ────────────────── 3. 通用動作選擇函數 ──────────────────
-def select_action_universal(obs: np.ndarray, model: nn.Module, model_type: str,
+def select_action_universal(obs: np.ndarray, model: Union[nn.Module, str, None], model_type: str, # 修改 model 的類型提示
                             hidden_state: Tuple[torch.Tensor, torch.Tensor] | None,
                             device: torch.device
                            ) -> Tuple[int, Tuple[torch.Tensor, torch.Tensor] | None]:
     with torch.no_grad():
         if model_type == "QNetRNN":
             assert hidden_state is not None, "QNetRNN 需要 hidden_state"
-            assert isinstance(model, QNetRNN), "模型實例與類型 'QNetRNN' 不符"
+            assert isinstance(model, QNetRNN), "模型實例與類型 'QNetRNN' 不符" # model 此時應為 nn.Module
             obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0).unsqueeze(0)
             q_values, next_hidden_state = model(obs_tensor, hidden_state)
             action = int(q_values.argmax(1).item())
             return action, next_hidden_state
         elif model_type == "QNet":
-            assert isinstance(model, QNet), "模型實例與類型 'QNet' 不符"
+            assert isinstance(model, QNet), "模型實例與類型 'QNet' 不符" # model 此時應為 nn.Module
             # QNet 在 eval 模式下，NoisyLinear 會自動使用 mu 值，不需要手動 reset_noise() 除非有特殊需求
             obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
             q_values = model(obs_tensor)
             action = int(q_values.argmax(1).item())
             return action, None
+        # --- 新增：處理硬編碼代理 ---
+        elif model_type == "HardcodedBallFollower":
+            # obs 的維度定義：(ball_x, ball_y, ball_vx, ball_vy, my_paddle_x, other_paddle_x, spin)
+            # 對於 Player A (上板): my_paddle_x 是 top_paddle_x (obs[4])
+            # 對於 Player B (下板): my_paddle_x 是 bottom_paddle_x (obs[4])
+            # 這由 env._get_obs_for_A() 和 env._get_obs_for_B() 決定，兩者都將自己的 paddle x 放在第4個索引 (0-indexed)
+
+            ball_x = obs[0]
+            my_paddle_x = obs[4]
+            
+            # 為了避免在球拍正下方時抖動，可以加入一個小的容忍區間
+            # paddle_width 在環境中定義為 0.2 (正規化座標)
+            # 球拍中心點如果已經很接近球的中心點，則不動
+            # 這裡我們使用一個簡單的比較，如果需要更精確的追蹤，可以考慮球拍寬度
+            # 例如，讓 paddle 中心追到球的 x 座標
+            tolerance = 0.01 # 可調整的容忍值，避免過度抖動
+
+            if ball_x < my_paddle_x - tolerance:
+                action = 0  # 向左移動
+            elif ball_x > my_paddle_x + tolerance:
+                action = 2  # 向右移動
+            else:
+                action = 1  # 保持不動
+            return action, None # 硬編碼代理不需要隱藏狀態
+        # --- 新增結束 ---
         else:
             raise ValueError(f"未知的模型類型: {model_type}")
 
