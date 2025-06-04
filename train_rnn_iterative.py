@@ -24,7 +24,7 @@ torch.set_num_threads(8)
 torch.set_num_interop_threads(8)
 
 # ------------------- 讀取配置 (與原文件一致，但可能需要為 RNN 添加新配置) ---
-with open("config.yaml", "r") as f:
+with open("config_rnn.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 def get_cfg(key, default=None):
     return cfg['training'].get(key, default)
@@ -41,6 +41,9 @@ def get_cfg(key, default=None):
 #   burn_in_length: 4       # (可選) BPTT burn-in 長度
 #   rnn_save_model_prefix: "model_rnn_" # RNN 模型保存前綴
 #   rnn_init_model_path: "checkpoints_rnn/initial_rnn_model.pth" # RNN 初始模型 (可選)
+
+latest_checkpoint_filename = get_cfg('latest_checkpoint_filename', "latest_rnn_training_state.pth") # 新增
+save_latest_interval_steps = get_cfg('save_latest_checkpoint_interval_steps', 10000) # 新增
 
 model_type = get_cfg('model_type', 'QNetRNN') # 默認使用 RNN
 feature_dim = get_cfg('feature_dim', 128)
@@ -77,6 +80,8 @@ ckpt_dir = get_cfg('ckpt_dir_rnn', 'checkpoints_rnn') # RNN 模型的保存目�
 os.makedirs(ckpt_dir, exist_ok=True)
 plot_dir = get_cfg('plot_dir_rnn', 'plot_rnn')
 os.makedirs(plot_dir, exist_ok=True)
+
+resumed_from_latest = False
 
 
 # ------------------- 新的序列經驗回放池 (PrioritizedReplay 需要大改或替換) ---
@@ -206,48 +211,138 @@ def create_qnet_rnn_model():
                    lstm_layers=lstm_layers,
                    head_hidden_dim=head_hidden_dim).to(device)
 
-# ------------------- 加載或初始化模型 (針對 RNN) -------------------
-if init_model_path and os.path.exists(init_model_path):
+print(f"[INFO] Attempting to load latest checkpoint: {os.path.join(ckpt_dir, latest_checkpoint_filename)}")
+latest_checkpoint_filepath = os.path.join(ckpt_dir, latest_checkpoint_filename)
+
+# 初始化一些變數，以便在任何分支中都能被賦值
+modelA = None
+modelB = None
+optimizerB = None # 等待 modelB 參數確定後初始化
+targetB = None    # 等待 modelB 確定後初始化
+epsilon = 1.0
+global_episode_count = 0
+train_steps_count = 0
+done_generations = 0
+current_generation = 0 # 主循環開始時會 current_generation += 1，所以初始為0或從checkpoint恢復
+old_state_for_reset = None
+
+
+if os.path.exists(latest_checkpoint_filepath) and save_latest_interval_steps > 0 : # 只有當設定的儲存間隔有效時才嘗試載入
+    print(f"[INFO] Loading training state from latest checkpoint: {latest_checkpoint_filepath}")
+    try:
+        checkpoint = torch.load(latest_checkpoint_filepath, map_location=device)
+
+        modelA = create_qnet_rnn_model()
+        modelA.load_state_dict(checkpoint['modelA_state'])
+        modelB = create_qnet_rnn_model()
+        modelB.load_state_dict(checkpoint['modelB_state'])
+
+        optimizerB = optim.Adam(modelB.parameters(), lr=lr) # 重新創建優化器
+        optimizerB.load_state_dict(checkpoint['optimizer_B_state']) # 然後載入狀態
+
+        epsilon = checkpoint['epsilon']
+        global_episode_count = checkpoint['global_episode_count']
+        train_steps_count = checkpoint['train_steps_count']
+        
+        current_generation = checkpoint['current_generation_active'] -1 
+        done_generations = checkpoint['done_generations_count']
+        
+        old_state_for_reset = checkpoint.get('old_state_for_reset') # 載入用於重置的狀態
+        # 如果舊的 checkpoint 沒有 old_state_for_reset，則從 modelA 生成
+        if old_state_for_reset is None:
+            old_state_for_reset = copy.deepcopy(modelA.state_dict())
+
+
+        targetB = create_qnet_rnn_model()
+        targetB.load_state_dict(modelB.state_dict()) 
+        targetB.eval()
+
+        print(f"[INFO] Resumed from latest checkpoint. Gen to start: {current_generation+1}, Done Gens: {done_generations}, Eps: {epsilon:.4f}, Global Episodes: {global_episode_count}, Train Steps: {train_steps_count}")
+        resumed_from_latest = True
+    except Exception as e:
+        print(f"[ERROR] Failed to load from latest checkpoint {latest_checkpoint_filepath}: {e}. Will proceed with other init methods.")
+        # 重置變數，以防部分載入導致狀態不一致
+        modelA, modelB, optimizerB, targetB, old_state_for_reset = None, None, None, None, None
+        epsilon, global_episode_count, train_steps_count, done_generations, current_generation = 1.0, 0, 0, 0, 0
+        resumed_from_latest = False
+
+
+if not resumed_from_latest and init_model_path and os.path.exists(init_model_path):
     print(f"[INFO] Loading initial RNN model from {init_model_path}")
-    checkpoint = torch.load(init_model_path, map_location=device)
-    # 假設 checkpoint 格式與之前類似，但存儲的是 RNN 模型的參數
-    modelA_state = checkpoint.get('modelA_state', checkpoint.get('modelB_state', checkpoint.get('model')))
-    modelB_state = checkpoint.get('modelB_state', checkpoint.get('modelA_state', checkpoint.get('model'))) # 或者 modelA 和 B 分別初始化
+    try:
+        checkpoint = torch.load(init_model_path, map_location=device)
+        modelA_state = checkpoint.get('modelA_state', checkpoint.get('modelB_state', checkpoint.get('model')))
+        # modelB_state 的處理：如果 init_model_path 是訓練到一半的模型，它可能有 modelB_state。
+        # 如果它是一個乾淨的初始模型，modelB_state 可能與 modelA_state 相同，或不存在。
+        modelB_initial_state_candidate = checkpoint.get('modelB_state', modelA_state) # 優先用 modelB, 其次 modelA
 
+        modelA = create_qnet_rnn_model()
+        if modelA_state: modelA.load_state_dict(modelA_state)
+        
+        modelB = create_qnet_rnn_model() 
+        if modelB_initial_state_candidate: 
+            modelB.load_state_dict(modelB_initial_state_candidate)
+        elif modelA_state: # 備用：如果連 modelA_state 都沒有，B 也是隨機
+            modelB.load_state_dict(modelA_state) # 若B無特定狀態，使其同A
+        
+        old_state_for_reset = checkpoint.get('old_state_for_reset', copy.deepcopy(modelA.state_dict()))
+
+        epsilon = checkpoint.get('epsilon', 1.0)
+        global_episode_count = checkpoint.get('episode', 0)
+        train_steps_count = checkpoint.get('train_steps_count', 0) 
+        
+        # done_generations 和 current_generation
+        # 如果 init_model_path 是訓練完成的 generation N 的模型，則 'generation' 欄位是 N
+        # 這意味著 N 代已經完成。下一代將是 N+1。
+        done_generations = checkpoint.get('generation', 0) 
+        current_generation = done_generations # 主循環會 +1，所以下一代是 done_generations + 1
+
+        optimizerB = optim.Adam(modelB.parameters(), lr=lr)
+        if 'optimizer_B_state' in checkpoint: 
+            optimizerB.load_state_dict(checkpoint['optimizer_B_state'])
+        
+        targetB = create_qnet_rnn_model()
+        targetB.load_state_dict(modelB.state_dict())
+        targetB.eval()
+        print(f"[INFO] Initialized from {init_model_path}. Epsilon: {epsilon:.4f}, Start Gen: {current_generation+1}, Done Gens: {done_generations}, Episodes: {global_episode_count}")
+    except Exception as e:
+        print(f"[ERROR] Failed to load from init_model_path {init_model_path}: {e}. Will proceed with random init if not already resumed.")
+        modelA, modelB, optimizerB, targetB, old_state_for_reset = None, None, None, None, None
+        epsilon, global_episode_count, train_steps_count, done_generations, current_generation = 1.0, 0, 0, 0, 0
+        # resumed_from_latest 應保持原值
+
+# 如果以上兩種方式都沒有成功初始化模型（例如檔案不存在、載入失敗，或者 resumed_from_latest=True 但載入失敗了）
+if modelA is None or modelB is None : # 檢查核心模型是否已初始化
+    print("[INFO] Initializing new RNN models randomly (or due to previous load failure).")
     modelA = create_qnet_rnn_model()
-    if modelA_state: modelA.load_state_dict(modelA_state)
-    modelB = create_qnet_rnn_model()
-    if modelB_state: modelB.load_state_dict(modelB_state)
+    modelB = create_qnet_rnn_model() 
+    modelB.load_state_dict(modelA.state_dict()) 
     
-    # old_state 用於 reset_B 時恢復 modelB 的初始狀態 (可以是 modelA 的狀態或一個特定的初始 RNN 狀態)
-    old_state_for_reset = copy.deepcopy(modelA.state_dict()) # 或者一個預存的初始 RNN 狀態
-
-    epsilon = checkpoint.get('epsilon', 1.0)
-    global_episode_count = checkpoint.get('episode', 0)
-    # done_generations = checkpoint.get('generation', 0) # 如果需要從特定 generation 恢復
-else:
-    print("[INFO] Initializing new RNN models randomly.")
-    modelA = create_qnet_rnn_model()
-    modelB = create_qnet_rnn_model()
-    old_state_for_reset = copy.deepcopy(modelA.state_dict()) # 保存 modelA 的初始狀態用於 reset_B
+    old_state_for_reset = copy.deepcopy(modelA.state_dict())
     epsilon = 1.0
     global_episode_count = 0
-    # done_generations = 0
+    train_steps_count = 0
+    done_generations = 0
+    current_generation = 0
+
+    optimizerB = optim.Adam(modelB.parameters(), lr=lr)
+    targetB = create_qnet_rnn_model()
+    targetB.load_state_dict(modelB.state_dict())
+    targetB.eval()
+    print(f"[INFO] Randomly initialized. Epsilon: {epsilon:.4f}, Start Gen: {current_generation+1}")
+
+
+# --- 模型後續設定 ---
+for p in modelA.parameters(): p.requires_grad = False
+modelA.eval()
 
 print(f"[INFO] model_type: {model_type}")
-print(f"[INFO] Model A ({'RNN' if isinstance(modelA, QNetRNN) else 'QNet'}) initialized.")
+print(f"[INFO] Model A ({'RNN' if isinstance(modelA, QNetRNN) else 'QNet'}) initialized {'and frozen'}.")
 print(f"[INFO] Model B ({'RNN' if isinstance(modelB, QNetRNN) else 'QNet'}) initialized, training target.")
-
-# 凍結 modelA (對手) 的參數
-for p in modelA.parameters(): p.requires_grad = False
-modelA.eval() # 確保 modelA 處於評估模式 (影響 NoisyLinear, Dropout 等)
-
-# ------------------- 目標網路 & 優化器 (針對 RNN modelB) -------------------
-targetB = create_qnet_rnn_model()
-targetB.load_state_dict(modelB.state_dict())
-targetB.eval() # 目標網路也應處於評_估模式
-
-optimizerB = optim.Adam(modelB.parameters(), lr=lr) # modelB 的所有參數都參與訓練
+if targetB:
+    print(f"[INFO] Target B network initialized.")
+if optimizerB:
+    print(f"[INFO] Optimizer for Model B initialized.")
 
 # ------------------- 初始化 Replay Buffer、記錄與計時 -------------------
 # memory = PrioritizedReplay(memory_size, alpha=0.6) # 舊的
@@ -413,12 +508,17 @@ def train_step_rnn():
     torch.nn.utils.clip_grad_norm_(modelB.parameters(), max_norm=get_cfg('grad_clip_norm', 1.0))
     optimizerB.step()
 
+    # --- 自動儲存最新進度 ---
+    # train_steps_count 在此之前尚未遞增，所以當 train_steps_count+1 是間隔倍數時儲存
+    if save_latest_interval_steps > 0 and (train_steps_count + 1) % save_latest_interval_steps == 0:
+        save_latest_training_checkpoint() # 呼叫儲存函數
+
     # --- 5. (如果實現了 PER) 更新優先級 ---
     # if sampled_indices is not None and importance_weights is not None:
     #     td_errors_abs = (q_values_for_action_at_T_minus_1 - td_targets).detach().abs().cpu().numpy()
     #     memory.update_priorities(sampled_indices, td_errors_abs) # memory.update_priorities 需要能處理
 
-    train_steps_count += 1
+    train_steps_count += 1 # 在這裡遞增 train_steps_count
     if train_steps_count % target_update_interval == 0:
         targetB.load_state_dict(modelB.state_dict())
         print(f"    [INFO] Target network updated at train step {train_steps_count}.")
@@ -519,6 +619,45 @@ if not pool_models:
 # ------------------- Self‑play 主循環 (大部分邏輯與原文件相似，但調用已修改的函數) ---
 done_generations   = 0
 current_generation = 0 # 從 0 開始或從 checkpoint 恢復
+
+def save_latest_training_checkpoint():
+    """儲存當前的訓練狀態到一個固定的臨時檔案"""
+    # 使用 global 關鍵字確保我們引用的是腳本級別的變數
+    global modelA, modelB, optimizerB, epsilon, global_episode_count, current_generation, done_generations, train_steps_count, old_state_for_reset, ckpt_dir, latest_checkpoint_filename, device, lr # device 和 lr 可能不需要存在 save dict 中，但函數內可能間接用到
+
+    if not (modelA and modelB and optimizerB): # 確保核心物件存在
+        print(f"    [WARN] Skipping save_latest_training_checkpoint as some core models/optimizer are not initialized.")
+        return
+
+    save_path = os.path.join(ckpt_dir, latest_checkpoint_filename)
+    # DEBUG_MSG: print(f"    [DEBUG_SAVE] Attempting to save to {save_path} at train_step {train_steps_count}...")
+    try:
+        # old_state_for_reset 應該是 modelA.state_dict() 的一個副本
+        # 如果 old_state_for_reset 未被正確維護，這裡直接用當前的 modelA 狀態
+        current_old_state = old_state_for_reset if old_state_for_reset is not None else copy.deepcopy(modelA.state_dict())
+
+        data_to_save = {
+            'modelA_state': modelA.state_dict(),
+            'modelB_state': modelB.state_dict(),
+            'optimizer_B_state': optimizerB.state_dict(),
+            'epsilon': epsilon,
+            'global_episode_count': global_episode_count,
+            'current_generation_active': current_generation, 
+            'done_generations_count': done_generations,   
+            'train_steps_count': train_steps_count,
+            'old_state_for_reset': current_old_state,
+        }
+        torch.save(data_to_save, save_path)
+        # DEBUG_MSG: print(f"    [DEBUG_SAVE] Successfully saved latest state to {save_path}")
+    except Exception as e:
+        print(f"    [ERROR] Failed to save latest training state to {save_path}: {e}")
+        # Optionally, try to save to a backup/error filename to preserve some state
+        try:
+            error_save_path = os.path.join(ckpt_dir, f"{latest_checkpoint_filename}.error_backup")
+            torch.save(data_to_save, error_save_path)
+            print(f"    [INFO] Saved a backup to {error_save_path} due to error.")
+        except Exception as e2:
+            print(f"    [ERROR] Failed to save error backup state: {e2}")
 
 def reset_model_b_for_new_attempt():
     """重置 modelB 為初始狀態 (通常是 modelA 的一個副本或隨機初始化)"""
@@ -686,22 +825,26 @@ while done_generations < max_generations:
             # 升級 modelA
             modelA.load_state_dict(modelB.state_dict())
             modelA.eval() # 確保新的 modelA 也是評估模式
-            # for p in modelA.parameters(): p.requires_grad = False # 這一行其實不需要，因為 eval() 會處理
+            old_state_for_reset = copy.deepcopy(modelA.state_dict()) # <<--- 新增這一行：更新 old_state_for_reset
+            # for p in modelA.parameters(): p.requires_grad = False 
 
             # 保存成功的模型 (modelB 的狀態，現在也是 modelA 的狀態)
             # 使用新的前綴和 generation 編號
             save_filename = f"{rnn_model_id_prefix}{current_generation}.pth"
             torch.save({
-                'modelA_state': modelA.state_dict(), # 保存為 modelA 的狀態，因為它已經被更新
-                'modelB_state': modelB.state_dict(), # 也保存 modelB 的狀態 (此刻與A相同)
-                'optimizer_B_state': optimizerB.state_dict(), # 可能不需要，因為下一代 B 會重新創建優化器
+                'modelA_state': modelA.state_dict(), 
+                'modelB_state': modelB.state_dict(), 
+                'optimizer_B_state': optimizerB.state_dict(), 
                 'epsilon': epsilon,
                 'episode': global_episode_count,
-                'generation': current_generation
+                'generation': current_generation, # 保存的是已完成的這一代
+                'train_steps_count': train_steps_count, # <<--- 新增：同時保存訓練步數
+                'old_state_for_reset': old_state_for_reset # <<--- 新增：保存這個時間點的 old_state_for_reset
             }, os.path.join(ckpt_dir, save_filename))
             print(f"  [Saved] Checkpoint: {os.path.join(ckpt_dir, save_filename)}")
             
             # 如果希望將成功的模型也加入到 pool_models (運行時的)
+
             newly_promoted_model = create_qnet_rnn_model()
             newly_promoted_model.load_state_dict(modelA.state_dict())
             newly_promoted_model.eval()
@@ -727,14 +870,19 @@ while done_generations < max_generations:
             print(f"  FAILURE! ModelB FAILED to pass thresholds after {max_retries} tries in Gen {current_generation}.")
             fault_filename = f"{rnn_model_id_prefix}{current_generation}_fault.pth"
             torch.save({
-                'modelB_state': modelB.state_dict(), # 保存失敗的 modelB
+                'modelB_state': modelB.state_dict(), 
                 'optimizer_B_state': optimizerB.state_dict(),
                 'epsilon': epsilon,
                 'episode': global_episode_count,
                 'generation': current_generation,
-                'modelA_state': modelA.state_dict() # 同時保存當時的 modelA 狀態
+                'modelA_state': modelA.state_dict(),
+                'train_steps_count': train_steps_count, # <<--- 新增：同時保存訓練步數
+                'old_state_for_reset': old_state_for_reset # <<--- 新增：保存這個時間點的 old_state_for_reset
             }, os.path.join(ckpt_dir, fault_filename))
             print(f"  [Fault Saved] Checkpoint: {os.path.join(ckpt_dir, fault_filename)}")
+            
+            # 重置 modelB 以準備下一個 generation (或者如果這是 self-play 的結束條件)
+            # ... (後續代碼)
             
             # 重置 modelB 以準備下一個 generation (或者如果這是 self-play 的結束條件)
             # 根據原邏輯，即使 fault，也算完成了一個 generation 的嘗試
