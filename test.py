@@ -40,9 +40,9 @@ USER_CONFIG: Dict[str, Any] = {
         "type": "QNet",                     # 模型類型: "QNet" 或 "QNetRNN"
     },
     "model_b": {
-        "name": "Model_B_RNN",              # 模型 B 的名稱 (顯示用)
-        "path": "checkpoints_rnn/rnn_agent_4.pth", # 模型 B 的 checkpoint 路徑
-        "type": "QNetRNN",                  # 模型類型: "QNet" 或 "QNetRNN"
+            "name": "RNN_Gen5",
+            "path": "checkpoints_rnn/rnn_pong_soul_1.pth", 
+            "type": "QNetRNN", 
     },
     "test_episodes": 10,                     # 測試的總局數
     "ball_image_path": "assets/sunglasses.png", # 球的圖片路徑 (例如 sunglasses.png)

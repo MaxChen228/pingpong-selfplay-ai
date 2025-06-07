@@ -1,0 +1,7 @@
+name,win,lose,draw,games_played,win_rate
+RNN_Gen5,333,167,0,500,0.666
+RNN_Gen4,320,180,0,500,0.64
+RNN_Gen3,283,217,0,500,0.566
+RNN_Gen2,248,252,0,500,0.496
+BallFollowerBot,185,315,0,500,0.37
+RNN_Gen1,131,369,0,500,0.262

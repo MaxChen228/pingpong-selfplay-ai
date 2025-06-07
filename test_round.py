@@ -35,26 +35,26 @@ USER_CONFIG: Dict[str, Any] = {
     "rnn_model_config_path": "config_rnn.yaml", # RNN 模型架構參數配置文件路徑
 
     "models_to_compete": [
-        {
-            "name": "model2-0", # 自定義模型名稱，用於報告和圖表
-            "path": "checkpoints/model2-0.pth", # 模型 checkpoint 路徑
-            "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
-        },
-        {
-            "name": "model3-0",
-            "path": "checkpoints/model3-0.pth",
-            "type": "QNet",
-        },
-        {
-            "name": "model4-0", # 自定義模型名稱，用於報告和圖表
-            "path": "checkpoints/model4-0.pth", # 模型 checkpoint 路徑
-            "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
-        },
-        {
-            "name": "model4-12",
-            "path": "checkpoints/model4-12.pth", #
-            "type": "QNet", #
-        },
+        # {
+        #     "name": "model2-0", # 自定義模型名稱，用於報告和圖表
+        #     "path": "checkpoints/model2-0.pth", # 模型 checkpoint 路徑
+        #     "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
+        # },
+        # {
+        #     "name": "model3-0",
+        #     "path": "checkpoints/model3-0.pth",
+        #     "type": "QNet",
+        # },
+        # {
+        #     "name": "model4-0", # 自定義模型名稱，用於報告和圖表
+        #     "path": "checkpoints/model4-0.pth", # 模型 checkpoint 路徑
+        #     "type": "QNet",         # 模型類型: "QNet" 或 "QNetRNN"
+        # },
+        # {
+        #     "name": "model4-12",
+        #     "path": "checkpoints/model4-12.pth", #
+        #     "type": "QNet", #
+        # },
         {
             "name": "RNN_Gen1",
             "path": "checkpoints_rnn/rnn_agent_1.pth", # 假設這是你的 RNN 模型
@@ -73,6 +73,16 @@ USER_CONFIG: Dict[str, Any] = {
         {
             "name": "RNN_Gen4",
             "path": "checkpoints_rnn/rnn_agent_4.pth", 
+            "type": "QNetRNN", 
+        },
+        {
+            "name": "RNN_Gen5",
+            "path": "checkpoints_rnn/rnn_pong_soul_1.pth", 
+            "type": "QNetRNN", 
+        },
+        {
+            "name": "RNN_Gen6",
+            "path": "checkpoints_rnn/rnn_pong_soul_2.pth", 
             "type": "QNetRNN", 
         },
         # 你可以繼續添加更多模型進行比賽

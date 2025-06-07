@@ -16,6 +16,13 @@ from models.qnet_rnn import QNetRNN
 from models.qnet import QNet # 可能仍需要 QNet 用於加載舊的對手池模型
 from envs.my_pong_env_2p import PongEnv2P
 import torch.nn.functional as F
+def is_in_colab():
+    """判斷程式是否在 Google Colab 環境中運行"""
+    try:
+        import google.colab
+        return True
+    except ImportError:
+        return False
 
 # ------------------- 限制線程數 (可選，與原文件一致) -------------------
 os.environ['OMP_NUM_THREADS']    = '8'
