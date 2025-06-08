@@ -40,8 +40,8 @@ USER_CONFIG: Dict[str, Any] = {
         "type": "QNet",                     # 模型類型: "QNet" 或 "QNetRNN"
     },
     "model_b": {
-            "name": "RNN_Gen5",
-            "path": "checkpoints_rnn/rnn_pong_soul_1.pth", 
+            "name": "RNN_Gen6",
+            "path": "checkpoints_rnn/rnn_pong_soul_2.pth", 
             "type": "QNetRNN", 
     },
     "test_episodes": 10,                     # 測試的總局數
