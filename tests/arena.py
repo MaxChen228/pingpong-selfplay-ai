@@ -18,11 +18,16 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
+import sys
 import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Union
+
+# 添加專案根目錄到 Python 路徑
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pandas as pd

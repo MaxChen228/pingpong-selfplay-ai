@@ -12,9 +12,14 @@ test_round.py ─ 通用模型循環賽評估器
 from __future__ import annotations
 
 import itertools
+import os
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Union
 import time
+
+# 添加專案根目錄到 Python 路徑
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 import torch
@@ -101,7 +106,7 @@ USER_CONFIG: Dict[str, Any] = {
         # --- 新增結束 ---
     ],
     "episodes_per_match": 100,  # 每對模型之間進行的比賽局數 #
-    "output_dir": "results_round_robin", # 結果 (CSV, 圖表) 的輸出目錄 #
+    "output_dir": "results", # 結果 (CSV, 圖表) 的輸出目錄 #
     "generate_plots": True,     # 是否生成勝率圖和 H2H 熱力圖 #
     "verbose_match_progress": False, # 是否在每局結束後打印詳細進度 (如果局數很多，可以設為 False) #
 }
@@ -392,7 +397,8 @@ def plot_win_rates(summary_df: pd.DataFrame, output_dir: Path, title_prefix: str
     ax.set_xlabel("模型 (Model)")
     ax.set_ylim(0, 1)
     ax.set_title(f"{title_prefix}循環賽模型勝率排名")
-    ax.tick_params(axis='x', rotation=45, ha="right")
+    ax.tick_params(axis='x', rotation=45)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     for i, v in enumerate(summary_df["win_rate"]):
         ax.text(i, v + 0.02, f"{v:.2%}", color='blue', ha='center', fontweight='bold')
     fig.tight_layout()
@@ -427,7 +433,8 @@ def plot_h2h_heatmap(match_df: pd.DataFrame, participant_names: List[str], outpu
     ax.set_xlabel("輸家 (Loser)")
     ax.set_ylabel("贏家 (Winner)")
     ax.set_title(f"{title_prefix}模型間 Head-to-Head 勝場數")
-    ax.tick_params(axis='x', rotation=45, ha="right")
+    ax.tick_params(axis='x', rotation=45)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     ax.tick_params(axis='y', rotation=0)
     fig.tight_layout()
     out_path = output_dir / "tournament_h2h_heatmap.png"
@@ -501,11 +508,15 @@ def main() -> None:
     header = f"{'Rank':<5} {'Model Name':<25} {'Wins':>5} {'Losses':>6} {'Draws':>5} {'Played':>6} {'Win Rate':>10}"
     print(header)
     print("-" * len(header))
-    for rank, (name, row) in enumerate(summary_df.itertuples(name=None), 1): # name=None for unnamed tuple
-        # row is now a tuple: (index_value, win, lose, draw, games_played, win_rate)
-        # index_value is model name because we set it as index
-        model_name = name # name is the index (model name)
-        wins, losses, draws, played, win_rate_val = row[0], row[1], row[2], row[3], row[4] # Access by position
+    for rank, row in enumerate(summary_df.itertuples(name=None), 1):
+        # itertuples() 返回的元組格式為: (index, col1, col2, ...)
+        # 第一個元素是索引（模型名稱），後面是各列的值
+        model_name = row[0]  # 索引（模型名稱）
+        wins = row[1]        # win 列
+        losses = row[2]      # lose 列
+        draws = row[3]       # draw 列
+        played = row[4]      # games_played 列
+        win_rate_val = row[5]  # win_rate 列
         print(
             f"#{rank:<4} {model_name:<25} {wins:>5} {losses:>6} {draws:>5} {played:>6} {win_rate_val*100:>9.2f}%"
         )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test.py ─ 2P Pong Viewer (兼容 QNet 與 QNetRNN 模型) - 視覺化增強版
+test.py ─ 2P Pong Viewer (兼容 QNet 與 QNetRNN 模型)
 ────────────────────────────────────────────────────────────────
 功能：
 - 支持載入 QNet (舊式 fc.* 或新式 NoisyDueling) 和 QNetRNN 模型。
@@ -9,7 +9,6 @@ test.py ─ 2P Pong Viewer (兼容 QNet 與 QNetRNN 模型) - 視覺化增強版
 - 顯示分數、球的線速度和角速度 (spin)。
 - 使用圖片作為球，並根據旋轉角度旋轉球的圖片。
 - 顯示球的運動軌跡。
-- 增強視覺效果：漸層背景、發光效果、改進的UI設計
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 import pygame
-import pygame.gfxdraw
 import numpy as np
 import torch
 import torch.nn as nn # For type hinting nn.Module
@@ -44,21 +42,18 @@ USER_CONFIG: Dict[str, Any] = {
         "name": "Model_A_QNet",             # 模型 A 的名稱 (顯示用)
         "path": "checkpoints/model4-0.pth", # 模型 A 的 checkpoint 路徑
         "type": "QNet",                     # 模型類型: "QNet" 或 "QNetRNN"
-        "color": (100, 200, 255),           # 模型 A 的主題色 (淺藍)
     },
     "model_b": {
             "name": "RNN_Gen6",
             "path": "checkpoints_rnn/rnn_pong_soul_2.pth", 
-            "type": "QNetRNN",
-            "color": (255, 150, 100),       # 模型 B 的主題色 (橘色)
+            "type": "QNetRNN", 
     },
-    "test_episodes": 2,                     # 測試的總局數 (減少為2局用於快速測試)
+    "test_episodes": 10,                     # 測試的總局數
     "ball_image_path": "assets/sunglasses.png", # 球的圖片路徑 (例如 sunglasses.png)
                                              # 請確保此圖片存在，或者設為 None 不使用圖片
     "render_fps": 60,                       # 渲染的目標 FPS
-    "trail_length": 50,                     # 球軌跡的長度 (增加到50)
+    "trail_length": 40,                     # 球軌跡的長度
     "enable_render": True,                  # 是否啟用 Pygame 渲染
-    "enable_effects": True,                 # 是否啟用視覺特效
 }
 # ────────────────── (用戶配置區域結束) ──────────────────
 
@@ -182,20 +177,12 @@ def select_action(obs: np.ndarray, model: nn.Module, model_type: str,
             raise ValueError(f"未知的模型類型: {model_type}")
 
 
-# ────────────────── 4. Pygame UI 繪製函數 (增強版) ──────────────────
+# ────────────────── 4. Pygame UI 繪製函數 ──────────────────
 class GameUI:
-    def __init__(self, screen: pygame.Surface, font: pygame.font.Font, render_size: int, 
-                 ball_image_path: str | None, model_a_color: Tuple[int, int, int], 
-                 model_b_color: Tuple[int, int, int]):
+    def __init__(self, screen: pygame.Surface, font: pygame.font.Font, render_size: int, ball_image_path: str | None):
         self.screen = screen
         self.font = font
-        self.small_font = pygame.font.SysFont("Consolas", 16) if pygame.font.match_font("Consolas") else pygame.font.SysFont(None, 16)
-        self.large_font = pygame.font.SysFont("Consolas", 32) if pygame.font.match_font("Consolas") else pygame.font.SysFont(None, 32)
         self.render_size = render_size
-        self.model_a_color = model_a_color
-        self.model_b_color = model_b_color
-        
-        # 球圖片設置
         self.ball_original_image = None
         if ball_image_path and Path(ball_image_path).exists():
             try:
@@ -212,40 +199,14 @@ class GameUI:
             if ball_image_path: # 如果提供了路徑但文件不存在
                  print(f"[警告] 球圖片 '{ball_image_path}' 未找到。將使用預設圓形繪製球。")
 
-        # Slider 參數 (改進樣式)
-        self.slider_rect = pygame.Rect(50, self.render_size - 50, 200, 12) # 位置調整到下方
-        self.knob_width = 16
-        self.knob_height = 24
+        # Slider 參數
+        self.slider_rect = pygame.Rect(50, self.render_size - 40, 200, 10) # 位置調整到下方
+        self.knob_width = 10
+        self.knob_height = 20
         self.speed_min, self.speed_max = 0.1, 5.0 # 調整速度範圍
         self.current_speed_factor = 1.0
         self.knob_x_offset = (self.slider_rect.width - self.knob_width) * \
                              (self.current_speed_factor - self.speed_min) / (self.speed_max - self.speed_min)
-        
-        # 創建網格背景
-        self.grid_surface = self.create_grid_background()
-        
-        # 碰撞效果參數
-        self.collision_effects = []  # 存儲碰撞效果
-        
-    def create_grid_background(self) -> pygame.Surface:
-        """創建網格背景圖案"""
-        grid_surface = pygame.Surface((self.render_size, self.render_size))
-        grid_surface.fill((15, 20, 35))  # 深藍背景
-        
-        # 繪製網格線
-        grid_color = (25, 35, 55)
-        grid_spacing = 40
-        for x in range(0, self.render_size, grid_spacing):
-            pygame.draw.line(grid_surface, grid_color, (x, 0), (x, self.render_size), 1)
-        for y in range(0, self.render_size, grid_spacing):
-            pygame.draw.line(grid_surface, grid_color, (0, y), (self.render_size, y), 1)
-            
-        # 添加中心線
-        center_color = (35, 50, 70)
-        pygame.draw.line(grid_surface, center_color, (0, self.render_size // 2), 
-                        (self.render_size, self.render_size // 2), 2)
-        
-        return grid_surface
 
     def update_slider(self, mouse_pos: Tuple[int, int], mouse_pressed: bool) -> None:
         if mouse_pressed and self.slider_rect.collidepoint(mouse_pos[0], mouse_pos[1] + self.knob_height // 2): # 擴大一點點滑動區域
@@ -255,240 +216,69 @@ class GameUI:
                                        (self.speed_max - self.speed_min) * \
                                        (self.knob_x_offset / (self.slider_rect.width - self.knob_width))
             self.current_speed_factor = max(self.speed_min, min(self.current_speed_factor, self.speed_max))
-    
-    def add_collision_effect(self, x: float, y: float):
-        """添加碰撞效果"""
-        self.collision_effects.append({
-            'x': x,
-            'y': y,
-            'radius': 5,
-            'alpha': 255,
-            'color': (255, 255, 200)
-        })
-    
-    def update_collision_effects(self):
-        """更新碰撞效果"""
-        for effect in self.collision_effects[:]:
-            effect['radius'] += 2
-            effect['alpha'] -= 15
-            if effect['alpha'] <= 0:
-                self.collision_effects.remove(effect)
-    
-    def draw_paddle_with_glow(self, center_x: int, y: int, width: int, height: int, 
-                              color: Tuple[int, int, int], is_top: bool):
-        """繪製帶發光效果的擋板"""
-        # 繪製發光效果
-        glow_surface = pygame.Surface((width + 40, height + 20), pygame.SRCALPHA)
-        glow_color = (*color, 50)
-        
-        # 多層光暈
-        for i in range(3):
-            glow_rect = pygame.Rect(20 - i*5, 10 - i*3, width + i*10, height + i*6)
-            pygame.draw.rect(glow_surface, glow_color, glow_rect, border_radius=5)
-        
-        # 繪製到主屏幕
-        glow_pos = (center_x - width // 2 - 20, y - 10 if is_top else y - 10)
-        self.screen.blit(glow_surface, glow_pos)
-        
-        # 繪製主擋板 (漸層效果)
-        paddle_rect = pygame.Rect(center_x - width // 2, y, width, height)
-        
-        # 創建漸層
-        for i in range(height):
-            progress = i / height
-            if is_top:
-                progress = 1 - progress
-            gradient_color = (
-                int(color[0] * (0.7 + 0.3 * progress)),
-                int(color[1] * (0.7 + 0.3 * progress)),
-                int(color[2] * (0.7 + 0.3 * progress))
-            )
-            pygame.draw.line(self.screen, gradient_color, 
-                           (paddle_rect.left, paddle_rect.top + i),
-                           (paddle_rect.right, paddle_rect.top + i))
-        
-        # 繪製邊框
-        pygame.draw.rect(self.screen, (255, 255, 255), paddle_rect, 2, border_radius=3)
-    
-    def draw_ball_with_glow(self, x: int, y: int, radius: int, speed: float, spin_angle: float):
-        """繪製帶光暈效果的球"""
-        # 根據速度改變顏色
-        speed_factor = min(speed / 0.1, 1.0)  # 正規化速度
-        ball_color = (
-            255,
-            int(255 * (1 - speed_factor * 0.3)),
-            int(255 * (1 - speed_factor * 0.5))
-        )
-        
-        # 繪製光暈
-        glow_radius = radius + 10
-        for i in range(5):
-            alpha = 30 - i * 5
-            glow_color = (*ball_color, alpha)
-            glow_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
-            pygame.draw.circle(glow_surface, glow_color, (glow_radius, glow_radius), glow_radius - i * 2)
-            self.screen.blit(glow_surface, (x - glow_radius, y - glow_radius))
-        
-        # 繪製球體
-        if self.ball_original_image:
-            rotated_ball_image = pygame.transform.rotate(self.ball_original_image, -spin_angle)
-            ball_rect = rotated_ball_image.get_rect(center=(x, y))
-            self.screen.blit(rotated_ball_image, ball_rect)
-        else:
-            # 繪製球體主體
-            pygame.draw.circle(self.screen, ball_color, (x, y), radius)
-            # 添加高光
-            highlight_pos = (x - radius // 3, y - radius // 3)
-            pygame.draw.circle(self.screen, (255, 255, 255), highlight_pos, radius // 4)
-    
-    def draw_trail_gradient(self, trail: List[Tuple[float, float]]):
-        """繪製漸變軌跡"""
-        if len(trail) < 2:
-            return
-        
-        trail_surface = pygame.Surface((self.render_size, self.render_size), pygame.SRCALPHA)
-        
-        for i in range(1, len(trail)):
-            # 計算透明度
-            alpha = int((i / len(trail)) * 150)
-            width = max(1, int((i / len(trail)) * 3))
-            color = (200, 200, 255, alpha)
-            
-            # 繪製線段
-            pygame.draw.line(trail_surface, color, trail[i-1], trail[i], width)
-        
-        self.screen.blit(trail_surface, (0, 0))
-    
-    def draw_info_panel(self, env: PongEnv2P, model_a_name: str, model_b_name: str, 
-                       ball_speed: float, paused: bool):
-        """繪製統一的信息面板"""
-        # 創建半透明背景
-        panel_surface = pygame.Surface((self.render_size, 90), pygame.SRCALPHA)
-        panel_surface.fill((0, 0, 0, 180))
-        self.screen.blit(panel_surface, (0, 0))
-        
-        # 繪製分數 (大字體)
-        score_text = f"{env.scoreA} - {env.scoreB}"
-        score_surface = self.large_font.render(score_text, True, (255, 255, 255))
-        score_rect = score_surface.get_rect(center=(self.render_size // 2, 25))
-        self.screen.blit(score_surface, score_rect)
-        
-        # 繪製模型名稱
-        model_a_text = self.font.render(model_a_name, True, self.model_a_color)
-        model_b_text = self.font.render(model_b_name, True, self.model_b_color)
-        self.screen.blit(model_a_text, (10, 45))
-        self.screen.blit(model_b_text, (self.render_size - model_b_text.get_width() - 10, 45))
-        
-        # 繪製速度和旋轉信息
-        speed_text = f"Speed: {ball_speed:.3f}"
-        spin_text = f"Spin: {env.spin:+.2f}"
-        speed_surface = self.small_font.render(speed_text, True, (200, 200, 200))
-        spin_surface = self.small_font.render(spin_text, True, (200, 200, 200))
-        self.screen.blit(speed_surface, (10, 70))
-        self.screen.blit(spin_surface, (150, 70))
-        
-        # 繪製暫停提示
-        if paused:
-            pause_text = "PAUSED"
-            pause_surface = self.large_font.render(pause_text, True, (255, 100, 100))
-            pause_rect = pause_surface.get_rect(center=(self.render_size // 2, self.render_size // 2))
-            
-            # 添加背景框
-            bg_rect = pause_rect.inflate(40, 20)
-            pygame.draw.rect(self.screen, (0, 0, 0), bg_rect, border_radius=10)
-            pygame.draw.rect(self.screen, (255, 100, 100), bg_rect, 3, border_radius=10)
-            
-            self.screen.blit(pause_surface, pause_rect)
-            
-            # 提示文字
-            hint_text = "Press SPACE to continue"
-            hint_surface = self.small_font.render(hint_text, True, (200, 200, 200))
-            hint_rect = hint_surface.get_rect(center=(self.render_size // 2, self.render_size // 2 + 40))
-            self.screen.blit(hint_surface, hint_rect)
-    
-    def draw_slider_enhanced(self):
-        """繪製增強版速度滑桿"""
-        # 滑桿背景
-        pygame.draw.rect(self.screen, (50, 50, 50), self.slider_rect, border_radius=6)
-        pygame.draw.rect(self.screen, (100, 100, 100), self.slider_rect, 2, border_radius=6)
-        
-        # 填充進度
-        fill_rect = pygame.Rect(self.slider_rect.x, self.slider_rect.y, 
-                                self.knob_x_offset + self.knob_width // 2, self.slider_rect.height)
-        pygame.draw.rect(self.screen, (100, 150, 255), fill_rect, border_radius=6)
-        
-        # 滑塊
-        knob_rect = pygame.Rect(self.slider_rect.x + self.knob_x_offset,
-                                self.slider_rect.y - (self.knob_height - self.slider_rect.height) // 2,
-                                self.knob_width, self.knob_height)
-        
-        # 滑塊陰影
-        shadow_rect = knob_rect.copy()
-        shadow_rect.x += 2
-        shadow_rect.y += 2
-        pygame.draw.rect(self.screen, (30, 30, 30), shadow_rect, border_radius=8)
-        
-        # 滑塊主體
-        pygame.draw.rect(self.screen, (255, 255, 255), knob_rect, border_radius=8)
-        pygame.draw.rect(self.screen, (150, 150, 150), knob_rect, 2, border_radius=8)
-        
-        # 速度文字
-        speed_text = f"Speed x{self.current_speed_factor:.1f}"
-        speed_surface = self.font.render(speed_text, True, (220, 220, 220))
-        self.screen.blit(speed_surface, (self.slider_rect.right + 15, 
-                                         self.slider_rect.centery - speed_surface.get_height() // 2))
 
-    def draw(self, env: PongEnv2P, model_a_name: str, model_b_name: str, paused: bool, 
-             trail: List[Tuple[float, float]], spin_angle: float):
-        # 繪製網格背景
-        self.screen.blit(self.grid_surface, (0, 0))
-        
-        # 更新碰撞效果
-        self.update_collision_effects()
-        
-        # 繪製碰撞效果
-        for effect in self.collision_effects:
-            if effect['alpha'] > 0:
-                effect_surface = pygame.Surface((effect['radius'] * 2, effect['radius'] * 2), pygame.SRCALPHA)
-                color_with_alpha = (*effect['color'], effect['alpha'])
-                pygame.draw.circle(effect_surface, color_with_alpha, 
-                                 (effect['radius'], effect['radius']), effect['radius'])
-                self.screen.blit(effect_surface, 
-                               (int(effect['x'] * self.render_size - effect['radius']),
-                                int(effect['y'] * self.render_size - effect['radius'])))
-        
-        # 繪製軌跡
-        self.draw_trail_gradient(trail)
-        
-        # 繪製擋板 (帶發光效果)
+
+    def draw(self, env: PongEnv2P, model_a_name: str, model_b_name: str, paused: bool, trail: List[Tuple[float, float]], spin_angle: float):
+        self.screen.fill((30, 30, 30)) # 背景色
+
+        # 繪製擋板
         paddle_pixel_width = int(env.paddle_width * self.render_size)
-        paddle_pixel_height = 12
-        
+        paddle_pixel_height = 10
         # 上方擋板 (A)
         top_paddle_center_x = int(env.top_paddle_x * self.render_size)
-        self.draw_paddle_with_glow(top_paddle_center_x, 0, paddle_pixel_width, 
-                                   paddle_pixel_height, self.model_a_color, True)
-        
+        pygame.draw.rect(self.screen, (0, 200, 0),
+                         (top_paddle_center_x - paddle_pixel_width // 2, 0, paddle_pixel_width, paddle_pixel_height))
         # 下方擋板 (B)
         bottom_paddle_center_x = int(env.bottom_paddle_x * self.render_size)
-        self.draw_paddle_with_glow(bottom_paddle_center_x, self.render_size - paddle_pixel_height,
-                                   paddle_pixel_width, paddle_pixel_height, self.model_b_color, False)
-        
+        pygame.draw.rect(self.screen, (0, 200, 0),
+                         (bottom_paddle_center_x - paddle_pixel_width // 2, self.render_size - paddle_pixel_height,
+                          paddle_pixel_width, paddle_pixel_height))
+
+        # 繪製軌跡
+        if len(trail) > 1:
+            pygame.draw.aalines(self.screen, (150, 150, 150), False, trail)
+
         # 繪製球
         ball_pixel_x = int(env.ball_x * self.render_size)
         ball_pixel_y = int(env.ball_y * self.render_size)
-        ball_pixel_radius = int(env.world_ball_radius * self.render_size)
-        ball_speed = math.hypot(env.ball_vx, env.ball_vy)
+        if self.ball_original_image:
+            rotated_ball_image = pygame.transform.rotate(self.ball_original_image, -spin_angle) # Pygame 角度是逆時針
+            ball_rect = rotated_ball_image.get_rect(center=(ball_pixel_x, ball_pixel_y))
+            self.screen.blit(rotated_ball_image, ball_rect)
+        else: # 預設繪製圓形
+            ball_pixel_radius = int(env.world_ball_radius * self.render_size)
+            pygame.draw.circle(self.screen, (255, 255, 255), (ball_pixel_x, ball_pixel_y), ball_pixel_radius)
+
+
+        # 繪製 Slider
+        pygame.draw.rect(self.screen, (180, 180, 180), self.slider_rect)
+        knob_rect = pygame.Rect(self.slider_rect.x + self.knob_x_offset,
+                                self.slider_rect.y - (self.knob_height - self.slider_rect.height) // 2,
+                                self.knob_width, self.knob_height)
+        pygame.draw.rect(self.screen, (255, 100, 100), knob_rect)
         
-        self.draw_ball_with_glow(ball_pixel_x, ball_pixel_y, ball_pixel_radius, 
-                                 ball_speed, spin_angle)
-        
-        # 繪製信息面板
-        self.draw_info_panel(env, model_a_name, model_b_name, ball_speed, paused)
-        
-        # 繪製滑桿
-        self.draw_slider_enhanced()
-        
+        speed_text = self.font.render(f"Speed x{self.current_speed_factor:.2f}", True, (220, 220, 220))
+        self.screen.blit(speed_text, (self.slider_rect.right + 10, self.slider_rect.centery - speed_text.get_height() // 2))
+
+        # 繪製分數和狀態信息
+        score_text = self.font.render(f"{model_a_name} (Top): {env.scoreA}  -  {model_b_name} (Bot): {env.scoreB}", True, (255, 255, 0))
+        self.screen.blit(score_text, (10, 10))
+
+        ball_speed_val = math.hypot(env.ball_vx, env.ball_vy)
+        # 將速度和旋轉正規化以便更好地理解（可選）
+        # normalized_speed = ball_speed_val / math.hypot(env.ball_speed_range[1], env.ball_speed_range[1]) # 相對於最大初始速度
+        # normalized_spin = env.spin / env.spin_range[1] # 相對於最大初始旋轉
+        status_text_line1 = self.font.render(f"Ball Speed: {ball_speed_val:.3f}", True, (220, 220, 220))
+        status_text_line2 = self.font.render(f"Ball Spin: {env.spin:+.2f} rad/step", True, (220, 220, 220))
+        self.screen.blit(status_text_line1, (10, 35))
+        self.screen.blit(status_text_line2, (10, 60))
+
+
+        if paused:
+            pause_text = self.font.render("PAUSED (SPACE to continue)", True, (255, 0, 0))
+            pause_rect = pause_text.get_rect(center=(self.render_size // 2, self.render_size // 2))
+            self.screen.blit(pause_text, pause_rect)
+
         pygame.display.flip()
 
 
@@ -535,17 +325,13 @@ def main() -> None:
             font = pygame.font.SysFont("Consolas", 20) #嘗試使用 Consolas
         except:
             font = pygame.font.SysFont(None, 24) # 備用字體
-        game_ui = GameUI(screen, font, render_size, USER_CONFIG["ball_image_path"],
-                        USER_CONFIG["model_a"]["color"], USER_CONFIG["model_b"]["color"])
+        game_ui = GameUI(screen, font, render_size, USER_CONFIG["ball_image_path"])
 
     clock = pygame.time.Clock()
     paused = False
     
     total_rewards_a = 0
     total_rewards_b = 0
-    
-    # 記錄上一幀的球位置（用於檢測碰撞）
-    last_ball_y = 0.5
 
     # --- 主迴圈 ---
     for ep in range(USER_CONFIG["test_episodes"]):
@@ -570,7 +356,6 @@ def main() -> None:
         ep_reward_b = 0
         done = False
         step_count = 0
-        last_ball_y = env.ball_y
 
         while not done:
             # --- 事件處理 ---
@@ -604,20 +389,6 @@ def main() -> None:
             # --- 環境交互 ---
             (obs_A_next, obs_B_next), (reward_A, reward_B), done, _ = env.step(action_A, action_B)
             
-            # 檢測碰撞 (球碰到擋板)
-            if USER_CONFIG["enable_effects"] and game_ui:
-                # 檢測上擋板碰撞
-                if last_ball_y > 0.05 and env.ball_y <= 0.05:
-                    if abs(env.ball_x - env.top_paddle_x) < env.paddle_width / 2:
-                        game_ui.add_collision_effect(env.ball_x, 0.05)
-                
-                # 檢測下擋板碰撞
-                if last_ball_y < 0.95 and env.ball_y >= 0.95:
-                    if abs(env.ball_x - env.bottom_paddle_x) < env.paddle_width / 2:
-                        game_ui.add_collision_effect(env.ball_x, 0.95)
-            
-            last_ball_y = env.ball_y
-            
             ep_reward_a += reward_A
             ep_reward_b += reward_B
 
@@ -649,23 +420,8 @@ def main() -> None:
                 total_rewards_b += ep_reward_b
                 # 短暫停留顯示最後一幀結果
                 if USER_CONFIG["enable_render"] and game_ui:
-                    # 顯示得分動畫效果
-                    winner_text = f"{USER_CONFIG['model_a']['name']} WINS!" if env.scoreA > env.scoreB else f"{USER_CONFIG['model_b']['name']} WINS!"
-                    winner_color = USER_CONFIG["model_a"]["color"] if env.scoreA > env.scoreB else USER_CONFIG["model_b"]["color"]
-                    winner_surface = game_ui.large_font.render(winner_text, True, winner_color)
-                    winner_rect = winner_surface.get_rect(center=(render_size // 2, render_size // 2 - 50))
-                    
-                    # 繪製最後一幀
-                    game_ui.draw(env, USER_CONFIG["model_a"]["name"], USER_CONFIG["model_b"]["name"], False, ball_trail, spin_angle_deg)
-                    
-                    # 添加獲勝文字
-                    bg_rect = winner_rect.inflate(60, 30)
-                    pygame.draw.rect(screen, (0, 0, 0), bg_rect, border_radius=15)
-                    pygame.draw.rect(screen, winner_color, bg_rect, 4, border_radius=15)
-                    screen.blit(winner_surface, winner_rect)
-                    
-                    pygame.display.flip()
-                    pygame.time.wait(2000) # 等待2秒
+                    game_ui.draw(env, USER_CONFIG["model_a"]["name"], USER_CONFIG["model_b"]["name"], True, ball_trail, spin_angle_deg) # 顯示 paused=True
+                    pygame.time.wait(1500) # 等待1.5秒
 
     # --- 所有測試局結束 ---
     print("\n\n--- 所有測試局結束 ---")
