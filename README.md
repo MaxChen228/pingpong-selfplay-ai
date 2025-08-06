@@ -27,15 +27,30 @@
 ## 專案結構
 
 ```
-pong_iterative_selfplay/
-├── envs/
-│    └── my_pong_env_2p.py    # 雙人Pong環境 (簡化版本)
-├── models/
-│    └── qnet.py              # QNet (神經網路定義)
-├── train_iterative.py        # 追加自對戰核心訓練程式
-├── config.yaml               # 訓練、環境相關的超參數設定
+pingpong-selfplay-ai/
+├── envs/                      # 環境定義
+│    ├── my_pong_env_2p.py    # 雙人Pong環境
+│    └── physics.py           # 物理引擎相關
+├── models/                    # 模型架構
+│    ├── qnet.py              # QNet (DQN神經網路)
+│    └── qnet_rnn.py          # QNetRNN (LSTM-based神經網路)
+├── scripts/                   # 訓練腳本
+│    ├── train_iterative.py   # QNet自對戰訓練
+│    └── train_rnn_iterative.py # RNN自對戰訓練
+├── tests/                     # 測試與評估工具
+│    ├── test_viewer.py       # 2P Pong視覺化測試器
+│    ├── test_round_robin.py  # 循環賽評估器
+│    └── arena.py             # 智慧型競技場系統
+├── checkpoints/               # QNet模型權重檔案
+├── checkpoints_rnn/           # RNN模型權重檔案
+├── results/                   # 訓練結果與分析
+│    └── archive/             # 歷史結果存檔
+├── assets/                    # 遊戲資源文件
+├── config.yaml               # QNet訓練配置
+├── config_rnn.yaml           # RNN訓練配置
+├── arena_database.json       # 競技場對戰數據庫
 ├── README.md                 # 本說明文件
-├── requirements.txt          # 主要依賴
+└── requirements.txt          # Python依賴套件
 ```
 
 ## 安裝與使用
@@ -45,17 +60,42 @@ pong_iterative_selfplay/
    pip install -r requirements.txt
    ```
 
-2. **執行追加訓練**  
+2. **執行訓練**  
+   
+   QNet模型訓練：
    ```bash
-   python train_iterative.py
+   python scripts/train_iterative.py
    ```
-   - 此程式會讀取 `config.yaml` 中的參數，如 `max_generations`、`win_threshold`等。  
+   
+   RNN模型訓練：
+   ```bash
+   python scripts/train_rnn_iterative.py
+   ```
+   
+   - 程式會讀取對應的配置檔案 (`config.yaml` 或 `config_rnn.yaml`)。  
    - 每個世代先執行一些對戰對局 (episodes_per_generation)，若 B 勝率 ≥ win_threshold => 升級。  
-   - 產生檔案 `model_gen{N}.pth`，並輸出 `training_iterative_rewards.png`。
+   - 產生檔案 `model_gen{N}.pth` 或 `rnn_pong_soul_{N}.pth`。
 
-3. **查看訓練狀態**  
+3. **模型測試與評估**
+   
+   視覺化測試（觀看兩個模型對戰）：
+   ```bash
+   python tests/test_viewer.py
+   ```
+   
+   循環賽評估（多模型對戰統計）：
+   ```bash
+   python tests/test_round_robin.py
+   ```
+   
+   競技場系統（持久化對戰數據庫）：
+   ```bash
+   python tests/arena.py
+   ```
+
+4. **查看訓練狀態**  
    - 於 console 可看到各世代 B 與 A 對戰的勝率、升級訊息。  
-   - 完成後可打開 `training_iterative_rewards.png` 觀察 B 的獎勵跟時間變化趨勢。
+   - 訓練結果會儲存在 `results/` 目錄中。
 
 ## 參數調整
 

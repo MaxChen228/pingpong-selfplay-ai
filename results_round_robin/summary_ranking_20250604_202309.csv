@@ -1,4 +1,0 @@
-name,win,lose,draw,games_played,win_rate
-model4-12,119,81,0,200,0.595
-RNN_Gen1,115,85,0,200,0.575
-model2-0,66,134,0,200,0.33
